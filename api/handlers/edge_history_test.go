@@ -233,3 +233,39 @@ func TestGetEdgeHistory_EmptyFilesDoNotDefineTheSpan(t *testing.T) {
 	assert.False(t, r.Live)
 	assert.Equal(t, 100.0, r.CoveragePct)
 }
+
+// Hours whose manifest the bucket archived are counted per recorder, on every feed
+// of that recorder, and only while still archived and inside the window.
+func TestGetEdgeHistory_ArchivedHours(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	now := time.Now().UTC()
+	h := now.Add(-3 * 24 * time.Hour).Truncate(time.Hour)
+	const rec, ip = "aws-fra-mn-recorder1", "63.178.8.5"
+	insertPcapFiles(t, api,
+		pcapFile{group: "233.84.178.1", recorder: rec, ip: ip, key: "g1", first: h, last: h.Add(30 * time.Minute), size: 1},
+		pcapFile{group: "233.84.178.15", recorder: rec, ip: ip, key: "g15", first: h, last: h.Add(30 * time.Minute), size: 1},
+	)
+	for _, m := range []struct {
+		key, state string
+		hour       time.Time
+	}{
+		{"a1", "archived", h.Add(-2 * time.Hour)},
+		{"a2", "archived", h.Add(-2 * time.Hour)}, // same hour: counted once
+		{"a3", "archived", h.Add(-5 * time.Hour)},
+		{"a4", "indexed", h.Add(-6 * time.Hour)},                              // restored and read
+		{"a5", "archived", now.Add(-30 * 24 * time.Hour).Truncate(time.Hour)}, // before a 7d window
+	} {
+		require.NoError(t, api.DB.Exec(context.Background(), fmt.Sprintf(`
+			INSERT INTO dz_edge_pcap_archived_manifest (manifest_key, recorder, recorder_ip, hour_ts, state, updated_at)
+			VALUES ('%s', '%s', '%s', fromUnixTimestamp(%d), '%s', now64(3))`, m.key, rec, ip, m.hour.Unix(), m.state)))
+	}
+
+	resp := getEdgeHistory(t, api, "7d")
+	require.Len(t, resp.Feeds, 2)
+	for _, f := range resp.Feeds {
+		assert.Equal(t, uint64(2), f.Recorders[0].ArchivedHours, f.MulticastGroup)
+	}
+	assert.Equal(t, uint64(2), resp.ArchivedHours, "per recorder, not per feed")
+}

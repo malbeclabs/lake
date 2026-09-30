@@ -305,6 +305,33 @@ from the same /24.
 The default ("all") view is page-cached under `edge_history:all` (10 min, mainnet only): it is the
 one range that resolves every file ever indexed.
 
+**Packet times must fall inside the file's hour directory** (±5 min), or the manifest is refused:
+the recorder rotates files at the hour, and across 1.2M files every range did. A bad clock cannot
+be repaired later — the row is never re-read — and one far-future last packet would hide every
+later gap behind the gap query's running max. Refusals WARN once each and escalate on
+`SyncPCAPWarehouse:manifests-refused` when they continue across passes (a `manifest_version` bump).
+
+**The bucket archives.** Its lifecycle rule moves every object over 128 KB to GLACIER after 90
+days. Manifests are read hours after they are written, so steady state never meets this; the
+backfill does, on the large catch-up manifests written after an outage (a few hundred, mostly fra
+and was in Feb–Mar). An archived read is not a failure: the key goes into
+`dz_edge_pcap_archived_manifest` (state `archived`), every pass retries it, and it is indexed once
+restored. The page counts those hours per recorder as unread rather than lost. The indexer's role
+is read-only, so restoring is an operator step — bulk retrieval from Glacier Flexible Retrieval is
+free and takes 5–12h:
+
+```bash
+# run by an operator with write access to the bucket
+clickhouse-client -q "SELECT manifest_key FROM dz_edge_pcap_archived_manifest FINAL WHERE state = 'archived'" |
+  while read -r key; do
+    aws s3api restore-object --bucket malbeclabs-multicast-pcap-warehouse --key "$key" \
+      --restore-request '{"Days":7,"GlacierJobParameters":{"Tier":"Bulk"}}'
+  done
+```
+
+The pcaps of those months are archived too, whether or not their manifest was: anything reading
+the captures themselves from before the last 90 days has to restore them first.
+
 **Read `dz_edge_pcap_file_current`, not the fact table.** A recorder that restarts resets its file
 counter, so its next `capture_<group>_000001.pcap` **overwrites** the object an earlier offload
 uploaded in the same hour. Both manifests are kept (the key includes `manifest_key`), the view

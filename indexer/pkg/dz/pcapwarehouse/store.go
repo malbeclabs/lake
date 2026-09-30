@@ -124,3 +124,76 @@ func (s *Store) Insert(ctx context.Context, files []FileRow) error {
 	}
 	return nil
 }
+
+// ArchivedManifest is a manifest the sync could not read because the bucket had
+// archived it (see ErrArchived).
+type ArchivedManifest struct {
+	Key      string
+	Recorder Recorder
+	Hour     time.Time
+}
+
+// Archived-manifest states, as dz_edge_pcap_archived_manifest records them.
+const (
+	archivedStateArchived = "archived"
+	archivedStateIndexed  = "indexed"
+	archivedStateRefused  = "refused"
+)
+
+// RecordArchived writes the current state of archived manifests.
+func (s *Store) RecordArchived(ctx context.Context, manifests []ArchivedManifest, state string) error {
+	if len(manifests) == 0 {
+		return nil
+	}
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO dz_edge_pcap_archived_manifest (manifest_key, recorder, recorder_ip, hour_ts, state, updated_at)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare archived manifest batch: %w", err)
+	}
+	now := time.Now().UTC()
+	for _, m := range manifests {
+		if err := batch.Append(m.Key, m.Recorder.Host, m.Recorder.IP, m.Hour.UTC(), state, now); err != nil {
+			return fmt.Errorf("failed to append archived manifest: %w", err)
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("failed to write archived manifests: %w", err)
+	}
+	return nil
+}
+
+// PendingArchived returns up to limit manifests still archived, oldest hour first.
+func (s *Store) PendingArchived(ctx context.Context, limit int) ([]ArchivedManifest, error) {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	rows, err := conn.Query(ctx, `
+		SELECT manifest_key, recorder, recorder_ip, hour_ts
+		FROM dz_edge_pcap_archived_manifest FINAL
+		WHERE state = ?
+		ORDER BY hour_ts, manifest_key
+		LIMIT ?
+	`, archivedStateArchived, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query archived manifests: %w", err)
+	}
+	defer rows.Close()
+	var out []ArchivedManifest
+	for rows.Next() {
+		var m ArchivedManifest
+		if err := rows.Scan(&m.Key, &m.Recorder.Host, &m.Recorder.IP, &m.Hour); err != nil {
+			return nil, fmt.Errorf("failed to scan archived manifest: %w", err)
+		}
+		m.Recorder.Prefix = m.Recorder.Host + "-" + m.Recorder.IP
+		m.Hour = m.Hour.UTC()
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating archived manifests: %w", err)
+	}
+	return out, nil
+}

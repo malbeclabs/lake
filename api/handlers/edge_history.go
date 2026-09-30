@@ -86,6 +86,12 @@ type EdgeHistoryRecorder struct {
 	// reused their key — a recorder restart resetting its file counter mid-hour. The
 	// time they covered reads as a gap unless the replacing file happens to cover it.
 	Overwritten uint64 `json:"overwritten"`
+	// ArchivedHours counts hours in the window with an offload manifest the bucket
+	// has archived and nothing has restored, so the indexer could not read what the
+	// recorder uploaded then. A manifest spans every feed the recorder captured that
+	// hour, so the count is the recorder's and repeats on each of its feeds. Gaps in
+	// those hours are unread, not necessarily lost.
+	ArchivedHours uint64 `json:"archived_hours"`
 	// CoveragePct is the share of the recorder's span inside the window — from its
 	// first packet (or the window start) to its last — not lost to a gap.
 	CoveragePct float64          `json:"coverage_pct"`
@@ -124,6 +130,7 @@ type EdgeHistoryResponse struct {
 	Bytes         uint64            `json:"bytes"`
 	Packets       uint64            `json:"packets"`
 	Overwritten   uint64            `json:"overwritten"`
+	ArchivedHours uint64            `json:"archived_hours"`
 	AsOf          *time.Time        `json:"as_of,omitempty"`
 	Feeds         []EdgeHistoryFeed `json:"feeds"`
 }
@@ -210,6 +217,7 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		// opens the window, which a scan of the window alone cannot see.
 		firstInWindow = map[edgeHistoryKey]time.Time{}
 		lastBefore    = map[edgeHistoryKey]time.Time{}
+		archivedHours = map[string]uint64{} // recorder host -> archived hours in the window
 	)
 
 	// The four reads are independent once the window is fixed, and each scans the
@@ -357,6 +365,34 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		return rows.Err()
 	})
 
+	// Archived hours, per recorder host. Like the codes, a qualifier on what the page
+	// shows rather than part of it, so a failure is a warning.
+	g.Go(func() error {
+		start := time.Now()
+		rows, err := db.Query(gctx, `
+			SELECT recorder, uniqExact(hour_ts)
+			FROM dz_edge_pcap_archived_manifest FINAL
+			WHERE state = 'archived' AND hour_ts >= ?
+			GROUP BY recorder
+		`, windowStart.Truncate(time.Hour))
+		metrics.RecordClickHouseQuery("edge_history_archived", time.Since(start), err)
+		if err != nil {
+			logWarn("edge history: archived manifests unavailable", "error", err)
+			return nil
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var host string
+			var n uint64
+			if err := rows.Scan(&host, &n); err != nil {
+				logWarn("edge history: archived manifests unreadable", "error", err)
+				return nil
+			}
+			archivedHours[host] = n
+		}
+		return nil
+	})
+
 	g.Go(func() error {
 		var err error
 		if codes, err = a.edgeHistoryGroupCodes(gctx); err != nil {
@@ -413,6 +449,7 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		rec.Bytes += r.bytes
 		rec.Packets += r.packets
 		rec.Overwritten += r.overwritten
+		rec.ArchivedHours = archivedHours[r.key.recorder]
 	}
 	if len(recorders) == 0 {
 		return resp, nil
@@ -445,6 +482,9 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		f.Packets += rec.Packets
 		f.Overwritten += rec.Overwritten
 		f.Recorders = append(f.Recorders, *rec)
+	}
+	for _, n := range archivedHours {
+		resp.ArchivedHours += n
 	}
 	for _, f := range feeds {
 		slices.SortFunc(f.Recorders, func(a, b EdgeHistoryRecorder) int { return strings.Compare(a.Recorder, b.Recorder) })

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,10 +22,11 @@ type fakeWarehouse struct {
 	gets      int
 	listSince map[string]time.Time
 	failGet   string
+	archived  map[string]bool
 }
 
 func newFakeWarehouse() *fakeWarehouse {
-	return &fakeWarehouse{hours: map[string]map[time.Time][]string{}, objects: map[string][]byte{}, listSince: map[string]time.Time{}}
+	return &fakeWarehouse{hours: map[string]map[time.Time][]string{}, objects: map[string][]byte{}, listSince: map[string]time.Time{}, archived: map[string]bool{}}
 }
 
 func (f *fakeWarehouse) put(rec string, hour time.Time, name, group string, first time.Time) string {
@@ -87,13 +89,49 @@ func (f *fakeWarehouse) GetObject(_ context.Context, key string) ([]byte, error)
 	if key == f.failGet {
 		return nil, errors.New("access denied")
 	}
+	if f.archived[key] {
+		return nil, fmt.Errorf("pcapwarehouse: get %s: %w", key, ErrArchived)
+	}
 	return f.objects[key], nil
 }
 
 // memStore is the store contract over a slice.
 type memStore struct {
-	mu   sync.Mutex
-	rows []FileRow
+	mu       sync.Mutex
+	rows     []FileRow
+	archived map[string]ArchivedManifest // key -> manifest, while its state is archived
+	states   map[string]string
+}
+
+func (m *memStore) RecordArchived(_ context.Context, manifests []ArchivedManifest, state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.archived == nil {
+		m.archived, m.states = map[string]ArchivedManifest{}, map[string]string{}
+	}
+	for _, a := range manifests {
+		m.states[a.Key] = state
+		if state == archivedStateArchived {
+			m.archived[a.Key] = a
+		} else {
+			delete(m.archived, a.Key)
+		}
+	}
+	return nil
+}
+
+func (m *memStore) PendingArchived(_ context.Context, limit int) ([]ArchivedManifest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ArchivedManifest
+	for _, a := range m.archived {
+		out = append(out, a)
+	}
+	slices.SortFunc(out, func(a, b ArchivedManifest) int { return strings.Compare(a.Key, b.Key) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *memStore) Cursors(context.Context) (map[string]time.Time, error) {
@@ -235,4 +273,38 @@ func TestSync_SkipsUnparseableManifest(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, src.gets)
 	require.Zero(t, res.ManifestsSkipped)
+}
+
+// An archived manifest is not a failure: the recorder carries on past it, the
+// manifest is recorded, later passes retry it, and once restored it is indexed.
+func TestSync_ArchivedManifestIsRecordedAndIndexedOnceRestored(t *testing.T) {
+	src := newFakeWarehouse()
+	src.put(recA, hourAt(6, 0), "a0", "233.84.178.15", hourAt(6, 0))
+	archivedKey := src.put(recA, hourAt(6, 1), "a1", "233.84.178.15", hourAt(6, 1))
+	src.put(recA, hourAt(6, 2), "a2", "233.84.178.15", hourAt(6, 2))
+	src.archived[archivedKey] = true
+	st := &memStore{}
+	s := newTestSyncer(t, src, st, time.Now, time.Minute)
+
+	res, err := s.Sync(t.Context())
+	require.NoError(t, err, "an archived manifest does not fail the recorder")
+	require.Equal(t, 1, res.ManifestsArchived)
+	require.Zero(t, res.ManifestsSkipped, "archived is not a refusal")
+	require.Equal(t, 2, res.FilesWritten, "the hours around it are read")
+	require.Equal(t, archivedStateArchived, st.states[archivedKey])
+
+	// Still archived: retried and left pending.
+	res, err = s.Sync(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.ArchivedPending)
+	require.Zero(t, res.ManifestsArchived, "not counted as newly archived again")
+
+	// Restored: the next pass reads it, although its hour is behind the cursor.
+	delete(src.archived, archivedKey)
+	res, err = s.Sync(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.ArchivedIndexed)
+	require.Zero(t, res.ArchivedPending)
+	require.Equal(t, archivedStateIndexed, st.states[archivedKey])
+	require.Len(t, st.rows, 3)
 }

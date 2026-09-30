@@ -37,6 +37,11 @@ const (
 	// flushRows batches small hours into one insert. A backfill walks tens of
 	// thousands of hour directories, and an insert per hour would be a part per hour.
 	flushRows = 20_000
+
+	// archivedPerPass bounds how many archived manifests one pass re-reads. The
+	// backfill meets a few hundred across the bucket; a read of one still archived is a
+	// cheap refused GET, so this only matters if a whole backlog is pending at once.
+	archivedPerPass = 500
 )
 
 var fetchRetry = dberror.RetryConfig{
@@ -50,6 +55,8 @@ type store interface {
 	Cursors(ctx context.Context) (map[string]time.Time, error)
 	IngestedManifests(ctx context.Context, rec Recorder, since time.Time) (map[string]struct{}, error)
 	Insert(ctx context.Context, files []FileRow) error
+	RecordArchived(ctx context.Context, manifests []ArchivedManifest, state string) error
+	PendingArchived(ctx context.Context, limit int) ([]ArchivedManifest, error)
 }
 
 type SyncerConfig struct {
@@ -96,8 +103,15 @@ type SyncResult struct {
 	Recorders        int
 	Hours            int
 	ManifestsRead    int
-	ManifestsSkipped int // unparseable manifests, logged and left out
+	ManifestsSkipped int // refused manifests (malformed or bad clock), logged and left out
 	FilesWritten     int
+	// ManifestsArchived counts manifests newly found archived this pass; they are
+	// recorded and retried on later passes, not skipped. ArchivedPending is how many
+	// earlier ones were still archived when retried, and ArchivedIndexed how many had
+	// been restored and were read.
+	ManifestsArchived int
+	ArchivedPending   int
+	ArchivedIndexed   int
 	// Behind is set when the budget ran out before some recorder reached its newest
 	// hour: a backfill in progress, which the next pass continues.
 	Behind   bool
@@ -113,6 +127,7 @@ func (r *SyncResult) add(o recorderResult) {
 	r.ManifestsRead += o.manifestsRead
 	r.ManifestsSkipped += o.manifestsSkipped
 	r.FilesWritten += o.filesWritten
+	r.ManifestsArchived += o.manifestsArchived
 	r.Behind = r.Behind || o.behind
 	if !o.minHour.IsZero() && (r.MinHour.IsZero() || o.minHour.Before(r.MinHour)) {
 		r.MinHour = o.minHour
@@ -124,6 +139,7 @@ func (r *SyncResult) add(o recorderResult) {
 
 type recorderResult struct {
 	hours, manifestsRead, manifestsSkipped, filesWritten int
+	manifestsArchived                                    int
 	behind                                               bool
 	minHour, maxHour                                     time.Time
 }
@@ -143,6 +159,9 @@ func (s *Syncer) Sync(ctx context.Context) (*SyncResult, error) {
 	}
 
 	res := &SyncResult{}
+	if err := s.retryArchived(ctx, res, deadline); err != nil {
+		return res, err
+	}
 	var (
 		mu   sync.Mutex
 		errs []error
@@ -195,15 +214,24 @@ func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Tim
 	// Hours are read oldest first and flushed in that order, so the cursor — the
 	// newest hour with a row — never runs ahead of an hour that was not written.
 	var buf []FileRow
+	var archived []ArchivedManifest
 	flush := func() error {
-		if len(buf) == 0 {
-			return nil
+		if len(buf) > 0 {
+			if err := s.cfg.Store.Insert(ctx, buf); err != nil {
+				return err
+			}
+			rr.filesWritten += len(buf)
+			buf = nil
 		}
-		if err := s.cfg.Store.Insert(ctx, buf); err != nil {
-			return err
+		// Recorded with the rows around them: once the cursor passes an archived hour
+		// the rescan never lists it again, so this table is the only way back to it.
+		if len(archived) > 0 {
+			if err := s.cfg.Store.RecordArchived(ctx, archived, archivedStateArchived); err != nil {
+				return err
+			}
+			rr.manifestsArchived += len(archived)
+			archived = nil
 		}
-		rr.filesWritten += len(buf)
-		buf = nil
 		return nil
 	}
 	// Every pass reads at least one hour past the cursor before it checks the budget.
@@ -215,14 +243,16 @@ func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Tim
 			rr.behind = true
 			break
 		}
-		rows, read, skipped, err := s.readHour(ctx, rec, hour, ingested)
+		hr, err := s.readHour(ctx, rec, hour, ingested)
 		if err != nil {
 			// Whole hours already buffered are still good; keep them.
 			return rr, errors.Join(err, flush())
 		}
 		rr.hours++
-		rr.manifestsRead += read
-		rr.manifestsSkipped += skipped
+		rr.manifestsRead += hr.read
+		rr.manifestsSkipped += hr.skipped
+		archived = append(archived, hr.archived...)
+		rows := hr.rows
 		if rr.minHour.IsZero() {
 			rr.minHour = hour
 		}
@@ -259,12 +289,19 @@ func (s *Syncer) pruneBarren(recorder string, since time.Time) {
 	}
 }
 
-func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ingested map[string]struct{}) ([]FileRow, int, int, error) {
+type hourResult struct {
+	rows          []FileRow
+	read, skipped int
+	archived      []ArchivedManifest
+}
+
+func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ingested map[string]struct{}) (hourResult, error) {
+	var hr hourResult
 	keys, err := dberror.Retry(ctx, fetchRetry, func() ([]string, error) {
 		return s.cfg.Bucket.ListManifests(ctx, rec.Prefix, hour)
 	})
 	if err != nil {
-		return nil, 0, 0, err
+		return hr, err
 	}
 	var todo []string
 	s.barrenMu.Lock()
@@ -278,7 +315,6 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 	}
 	s.barrenMu.Unlock()
 	perKey := make([][]FileRow, len(todo))
-	var skipped int
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(defaultFetchConcurrency)
@@ -290,6 +326,15 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 			data, err := dberror.Retry(gctx, fetchRetry, func() ([]byte, error) {
 				return s.cfg.Bucket.GetObject(gctx, key)
 			})
+			if errors.Is(err, ErrArchived) {
+				// Not a failure of the recorder: recorded for a later pass to read once
+				// restored, and remembered here so the rescan window does not re-read it.
+				mu.Lock()
+				hr.archived = append(hr.archived, ArchivedManifest{Key: key, Recorder: rec, Hour: hour})
+				mu.Unlock()
+				s.markBarren(rec.Prefix, key, hour)
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -300,10 +345,11 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 				// barren, so later passes skip it until its hour leaves the rescan
 				// window; a restart forgets it, and it is read (and logged) once more.
 				// A manifest corrected in place inside the window is therefore not
-				// re-read by this process.
+				// re-read by this process. SyncResult.ManifestsSkipped carries the count
+				// to the activity, which escalates when refusals continue across passes.
 				s.cfg.Logger.Warn("pcapwarehouse: skipping unreadable manifest", "key", key, "error", err)
 				mu.Lock()
-				skipped++
+				hr.skipped++
 				mu.Unlock()
 				s.markBarren(rec.Prefix, key, hour)
 				return nil
@@ -316,11 +362,77 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, 0, 0, err
+		return hourResult{}, err
 	}
-	var rows []FileRow
 	for _, r := range perKey {
-		rows = append(rows, r...)
+		hr.rows = append(hr.rows, r...)
 	}
-	return rows, len(todo) - skipped, skipped, nil
+	hr.read = len(todo) - hr.skipped - len(hr.archived)
+	return hr, nil
+}
+
+// retryArchived re-reads manifests an earlier pass found archived. One restored since
+// is indexed like any other; one still archived stays pending; one that turns out to
+// be malformed is refused, so it is not retried forever.
+func (s *Syncer) retryArchived(ctx context.Context, res *SyncResult, deadline time.Time) error {
+	pending, err := s.cfg.Store.PendingArchived(ctx, archivedPerPass)
+	if err != nil {
+		return err
+	}
+	var (
+		mu               sync.Mutex
+		rows             []FileRow
+		indexed, refused []ArchivedManifest
+		stillArchived    int
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(defaultFetchConcurrency)
+	for _, m := range pending {
+		g.Go(func() error {
+			if s.cfg.Now().After(deadline) {
+				mu.Lock()
+				stillArchived++
+				mu.Unlock()
+				return nil
+			}
+			data, err := dberror.Retry(gctx, fetchRetry, func() ([]byte, error) {
+				return s.cfg.Bucket.GetObject(gctx, m.Key)
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, ErrArchived):
+				stillArchived++
+			case err != nil:
+				return err
+			default:
+				parsed, perr := ParseManifest(data, m.Recorder, m.Hour, m.Key)
+				if perr != nil {
+					s.cfg.Logger.Warn("pcapwarehouse: skipping unreadable manifest", "key", m.Key, "error", perr)
+					res.ManifestsSkipped++
+					refused = append(refused, m)
+					return nil
+				}
+				rows = append(rows, parsed...)
+				indexed = append(indexed, m)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	if err := s.cfg.Store.Insert(ctx, rows); err != nil {
+		return err
+	}
+	res.FilesWritten += len(rows)
+	if err := s.cfg.Store.RecordArchived(ctx, indexed, archivedStateIndexed); err != nil {
+		return err
+	}
+	if err := s.cfg.Store.RecordArchived(ctx, refused, archivedStateRefused); err != nil {
+		return err
+	}
+	res.ArchivedIndexed = len(indexed)
+	res.ArchivedPending = stillArchived
+	return nil
 }

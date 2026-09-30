@@ -104,6 +104,16 @@ func ParseManifest(data []byte, rec Recorder, hour time.Time, key string) ([]Fil
 			// than repaired.
 			return nil, fmt.Errorf("manifest %s: file %s captured %d packets with an invalid packet range (%q to %q)",
 				key, f.Filename, f.PacketsCaptured, f.FirstPacketUTC, f.LastPacketUTC)
+		} else if first.Before(hour.Add(-hourSlack)) || !last.Before(hour.Add(time.Hour+hourSlack)) {
+			// The recorder rotates its files at the hour and files each under the hour
+			// it captured: over 1.2M files read from the bucket, every packet range lay
+			// inside its hour directory. One outside it is a bad clock, and it cannot be
+			// repaired later — the row is never re-read — while a far-future last packet
+			// would hide every later gap behind the gap query's running max and keep the
+			// recorder reading as live, and a 1970 first packet would stretch the
+			// all-history window to decades of buckets.
+			return nil, fmt.Errorf("manifest %s: file %s packet range %s to %s lies outside its hour directory %s",
+				key, f.Filename, f.FirstPacketUTC, f.LastPacketUTC, hourDir(hour))
 		}
 		s3Key := f.S3Key
 		if s3Key == "" {
@@ -127,6 +137,10 @@ func ParseManifest(data []byte, rec Recorder, hour time.Time, key string) ([]Fil
 	}
 	return rows, nil
 }
+
+// hourSlack tolerates a little clock skew at the hour's edges when checking that a
+// file's packets fall inside the hour it was filed under.
+const hourSlack = 5 * time.Minute
 
 func parseTS(s string) (time.Time, error) {
 	if s == "" {

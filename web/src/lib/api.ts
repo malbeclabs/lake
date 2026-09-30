@@ -8476,6 +8476,9 @@ export interface EdgeHistoryRecorder {
   bytes: number
   packets: number
   overwritten: number
+  // Hours whose offload manifest the bucket archived and nothing restored: gaps in
+  // them are unread, not necessarily lost. Per recorder, repeated on each feed.
+  archived_hours: number
   coverage_pct: number
   gap_count: number
   gap_seconds: number
@@ -8510,6 +8513,7 @@ export interface EdgeHistoryResponse {
   bytes: number
   packets: number
   overwritten: number
+  archived_hours: number
   as_of?: string
   feeds: EdgeHistoryFeed[]
 }

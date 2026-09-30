@@ -384,6 +384,14 @@ function RecorderDetail({ rec, minGap }: { rec: EdgeHistoryRecorder; minGap: num
         </table>
         <div className="mt-3 text-muted-foreground">
           {formatCount(rec.files)} files · {formatCount(rec.packets)} packets · {formatBytes(rec.bytes)}
+          {rec.archived_hours > 0 && (
+            <div className="mt-1 text-muted-foreground">
+              {formatCount(rec.archived_hours)} hour{rec.archived_hours === 1 ? '' : 's'} not read: the bucket moved
+              {rec.archived_hours === 1 ? ' its manifest' : ' their manifests'} to Glacier (objects over 128 KB, after 90
+              days). Gaps in {rec.archived_hours === 1 ? 'that hour' : 'those hours'} are unread, not necessarily lost;
+              they fill in once the manifests are restored.
+            </div>
+          )}
           {rec.overwritten > 0 && (
             <div className="mt-1 text-amber-600 dark:text-amber-400">
               {formatCount(rec.overwritten)} file{rec.overwritten === 1 ? '' : 's'} overwritten in the bucket — a restarted
@@ -518,6 +526,14 @@ function FeedSection({
                     {formatCount(rec.gap_count)} · {formatDuration(rec.gap_seconds)}
                   </span>
                 )}
+                {rec.archived_hours > 0 && (
+                  <span
+                    className="block text-[10px] text-muted-foreground"
+                    title={`${rec.archived_hours} hours whose manifest is archived in Glacier and not yet read`}
+                  >
+                    {formatCount(rec.archived_hours)}h archived
+                  </span>
+                )}
               </span>
               <span className="text-right tabular-nums text-xs">
                 {formatBytes(rec.bytes)}
@@ -558,6 +574,7 @@ function Summary({ data }: { data: EdgeHistoryResponse }) {
       {stat('Recorders', formatCount(recorders))}
       {stat('Earliest capture', data.feeds.length ? day(Math.min(...data.feeds.map((f) => new Date(f.first_ts).getTime()))) : '—')}
       {data.overwritten > 0 && stat('Overwritten files', formatCount(data.overwritten))}
+      {data.archived_hours > 0 && stat('Archived hours (unread)', formatCount(data.archived_hours))}
     </div>
   )
 }

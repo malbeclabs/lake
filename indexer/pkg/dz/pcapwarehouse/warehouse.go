@@ -2,6 +2,7 @@ package pcapwarehouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 )
 
 // Warehouse reads the pcap warehouse bucket's layout:
@@ -25,9 +27,17 @@ type Warehouse interface {
 	ListHours(ctx context.Context, recorder string, since time.Time) ([]time.Time, error)
 	// ListManifests returns the full keys of the manifests in one hour directory.
 	ListManifests(ctx context.Context, recorder string, hour time.Time) ([]string, error)
-	// GetObject reads one object.
+	// GetObject reads one object. It returns an error wrapping ErrArchived for an
+	// object in an archive storage class that has not been restored.
 	GetObject(ctx context.Context, key string) ([]byte, error)
 }
+
+// ErrArchived marks an object that cannot be read until it is restored. The bucket's
+// lifecycle rule moves every object over 128 KB to GLACIER after 90 days, so a
+// manifest large enough — the catch-up offload after an outage lists hundreds of
+// files — is unreadable once the backfill reaches it. S3 answers those reads with
+// InvalidObjectState, both before a restore is requested and while one is running.
+var ErrArchived = errors.New("object is archived and not restored")
 
 // S3WarehouseConfig configures the warehouse bucket reader.
 type S3WarehouseConfig struct {
@@ -161,6 +171,10 @@ func (s *S3Warehouse) GetObject(ctx context.Context, key string) ([]byte, error)
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidObjectState" {
+			return nil, fmt.Errorf("pcapwarehouse: get %s: %w", key, ErrArchived)
+		}
 		return nil, fmt.Errorf("pcapwarehouse: get %s: %w", key, err)
 	}
 	defer out.Body.Close()

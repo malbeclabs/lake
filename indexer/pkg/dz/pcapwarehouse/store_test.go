@@ -87,3 +87,32 @@ func TestStore_RoundTrip(t *testing.T) {
 	require.Equal(t, uint64(52_429_000+1_000), size, "k2 reads as its newest offload")
 	require.True(t, first.Equal(gotFirst), "microsecond packet time survives: %s vs %s", first, gotFirst)
 }
+
+// Archived manifests round-trip through their explicit-column insert, and the newest
+// state per key decides whether one is still pending.
+func TestStore_ArchivedManifests(t *testing.T) {
+	client := laketesting.NewClient(t, sharedDB)
+	st, err := NewStore(StoreConfig{Logger: laketesting.NewLogger(), ClickHouse: client})
+	require.NoError(t, err)
+	ctx := t.Context()
+
+	rec, _ := ParseRecorder(recA)
+	older := ArchivedManifest{Key: "m-older", Recorder: rec, Hour: hourAt(1, 2)}
+	newer := ArchivedManifest{Key: "m-newer", Recorder: rec, Hour: hourAt(3, 4)}
+	require.NoError(t, st.RecordArchived(ctx, []ArchivedManifest{newer, older}, archivedStateArchived))
+
+	pending, err := st.PendingArchived(ctx, 10)
+	require.NoError(t, err)
+	require.Equal(t, []ArchivedManifest{older, newer}, pending, "oldest hour first, recorder resolved")
+
+	// updated_at has millisecond resolution; keep the second write strictly later.
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, st.RecordArchived(ctx, []ArchivedManifest{older}, archivedStateIndexed))
+	pending, err = st.PendingArchived(ctx, 10)
+	require.NoError(t, err)
+	require.Equal(t, []ArchivedManifest{newer}, pending)
+
+	pending, err = st.PendingArchived(ctx, 0)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+}
