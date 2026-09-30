@@ -11,6 +11,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/pcapwarehouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
@@ -37,14 +38,15 @@ type Activities struct {
 	FeedSubscription *feedsubscription.View // nil when shreds is not configured
 	PermissionEvents *permissionevents.View // nil when permission events indexing is not configured
 	TelemLatency     *dztelemlatency.View
-	TelemUsage       *dztelemusage.View // nil when InfluxDB is not configured
-	GraphStore       *dzgraph.Store     // nil when Neo4j is not configured
-	ISISSource       isis.Source        // nil when ISIS is not enabled
-	ISISStore        *isis.Store        // nil when ISIS is not enabled
-	MrouteSource     mroute.Source      // nil when mroute ingest is not enabled
-	MrouteStore      *mroute.Store      // nil when mroute ingest is not enabled
-	MSDPSource       msdp.Source        // nil when MSDP ingest is not enabled
-	MSDPStore        *msdp.Store        // nil when MSDP ingest is not enabled
+	TelemUsage       *dztelemusage.View    // nil when InfluxDB is not configured
+	GraphStore       *dzgraph.Store        // nil when Neo4j is not configured
+	ISISSource       isis.Source           // nil when ISIS is not enabled
+	ISISStore        *isis.Store           // nil when ISIS is not enabled
+	MrouteSource     mroute.Source         // nil when mroute ingest is not enabled
+	MrouteStore      *mroute.Store         // nil when mroute ingest is not enabled
+	MSDPSource       msdp.Source           // nil when MSDP ingest is not enabled
+	MSDPStore        *msdp.Store           // nil when MSDP ingest is not enabled
+	PCAPWarehouse    *pcapwarehouse.Syncer // nil when the pcap warehouse is not configured
 
 	// esc escalates consecutive refresh failures per activity from WARN to
 	// ERROR. At ~60s per workflow iteration, the default thresholds mean ~3
@@ -286,6 +288,52 @@ func (a *Activities) SyncMSDP(ctx context.Context) error {
 			return result, fmt.Errorf("msdp fetch: %w", err)
 		}
 		return result, a.MSDPStore.Sync(ctx, dumps)
+	}))
+}
+
+// SyncPCAPWarehouse indexes the offload manifests the edge recorders write to the
+// multicast pcap warehouse bucket. Each pass is bounded by pcapwarehouse.DefaultBudget
+// and resumes from each recorder's newest ingested hour, so a first run backfills
+// the bucket's history over successive cycles. No-op if not configured.
+func (a *Activities) SyncPCAPWarehouse(ctx context.Context) error {
+	if a.PCAPWarehouse == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncPCAPWarehouse", a.Network)
+		return nil
+	}
+	return a.refresh(ctx, "SyncPCAPWarehouse", a.observeSync("pcap_warehouse", func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
+		res, err := a.PCAPWarehouse.Sync(ctx)
+		if res != nil {
+			result.RowsAffected = int64(res.FilesWritten)
+			if !res.MinHour.IsZero() {
+				result.SourceMinEventTS = &res.MinHour
+				result.SourceMaxEventTS = &res.MaxHour
+			}
+			a.Log.Info("pcap_warehouse: sync pass",
+				"recorders", res.Recorders, "hours", res.Hours,
+				"manifests_read", res.ManifestsRead, "manifests_skipped", res.ManifestsSkipped,
+				"manifests_archived", res.ManifestsArchived, "archived_pending", res.ArchivedPending,
+				"archived_indexed", res.ArchivedIndexed,
+				"files_written", res.FilesWritten, "behind", res.Behind)
+			// A refused manifest does not fail the pass — one malformed file must not
+			// stop ingest behind it — so the refusals escalate on their own key. The
+			// syncer remembers a refused manifest and does not count it again, so this
+			// fails on consecutive passes only while new manifests keep being refused:
+			// the shape of a manifest_version bump, which would otherwise stop ingest
+			// everywhere with nothing but WARNs, and the page reading the missing hours
+			// as capture outages. Archived manifests are not refusals and never page.
+			const refusedKey = "SyncPCAPWarehouse:manifests-refused"
+			if res.ManifestsSkipped > 0 {
+				a.esc.Fail(a.Log, refusedKey, "pcap warehouse: manifests refused",
+					"refused", res.ManifestsSkipped, "manifests_read", res.ManifestsRead)
+			} else {
+				a.esc.Reset(refusedKey)
+			}
+		}
+		if err != nil {
+			return result, fmt.Errorf("pcap warehouse sync: %w", err)
+		}
+		return result, nil
 	}))
 }
 

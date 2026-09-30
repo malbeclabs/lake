@@ -75,6 +75,7 @@ import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
 import { KalshiL2Page } from './components/kalshi-l2-page'
 import { InternalOnly } from './components/internal-only'
 import { EdgeMulticastPage } from './components/edge-multicast-page'
+import { EdgeHistoryPage } from './components/edge-history-page'
 import { PermissionAuditPage } from './components/permission-audit-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { AccessPassesPage } from '@/components/access-passes-page'
@@ -756,6 +757,7 @@ function AppContent() {
                 an unannounced venue the page is the disclosure. A new page whose sidebar entry
                 is gated goes in InternalOnly here too, or the two disagree again. */}
             <Route path="/dz/edge/multicast" element={<InternalOnly><EdgeMulticastPage /></InternalOnly>} />
+            <Route path="/dz/edge/history" element={<InternalOnly><EdgeHistoryPage /></InternalOnly>} />
             <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
             <Route path="/dz/kalshi/scoreboard" element={<InternalOnly><KalshiScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi/l2" element={<InternalOnly><KalshiL2Page /></InternalOnly>} />

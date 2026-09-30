@@ -112,6 +112,14 @@ type Config struct {
 	MSDPS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
 	MSDPS3EndpointURL string // Custom S3 endpoint URL (for testing)
 
+	// Multicast pcap warehouse (optional). When the bucket is set, the offload
+	// manifests the edge recorders write beside their pcaps are indexed into
+	// fact_dz_edge_pcap_file, one row per capture file.
+	PCAPWarehouseS3Bucket      string // empty = disabled
+	PCAPWarehouseS3Region      string // AWS region (default: us-east-1)
+	PCAPWarehouseS3KeyPrefix   string // the network directory, e.g. mainnet-beta
+	PCAPWarehouseS3EndpointURL string // Custom S3 endpoint URL (for testing)
+
 	// validators.app configuration (optional, mainnet-beta only).
 	ValidatorsAppClient          validatorsapp.Client
 	ValidatorsAppRefreshInterval time.Duration

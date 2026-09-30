@@ -8449,6 +8449,83 @@ export async function fetchEdgeMulticast(): Promise<EdgeMulticastResponse> {
   return res.json()
 }
 
+// Edge History: what the multicast pcap warehouse holds per feed and recorder (internal only).
+export type EdgeHistoryRange = '7d' | '30d' | '90d' | 'all'
+
+export interface EdgeHistoryGap {
+  start: string
+  end: string
+  seconds: number
+}
+
+export interface EdgeHistoryInstance {
+  ip: string
+  first_ts: string
+  last_ts: string
+  files: number
+}
+
+export interface EdgeHistoryRecorder {
+  recorder: string
+  site: string
+  instances: EdgeHistoryInstance[]
+  first_ts: string
+  last_ts: string
+  live: boolean
+  files: number
+  bytes: number
+  packets: number
+  overwritten: number
+  // Hours whose offload manifest the bucket archived and nothing restored: gaps in
+  // them are unread, not necessarily lost. Per recorder, repeated on each feed.
+  archived_hours: number
+  coverage_pct: number
+  gap_count: number
+  gap_seconds: number
+  // Longest first, capped; gap_count and gap_seconds cover all of them.
+  gaps: EdgeHistoryGap[]
+  // Aligned to the response window: bucket i starts at window_start + i * bucket_seconds.
+  // Coverage is the captured share of the bucket, or -1 outside the recorder's span.
+  bucket_bytes: number[]
+  bucket_coverage: number[]
+}
+
+export interface EdgeHistoryFeed {
+  multicast_group: string
+  code: string
+  first_ts: string
+  last_ts: string
+  files: number
+  bytes: number
+  packets: number
+  overwritten: number
+  recorders: EdgeHistoryRecorder[]
+}
+
+export interface EdgeHistoryResponse {
+  range: EdgeHistoryRange
+  window_start: string
+  window_end: string
+  bucket: 'hour' | 'day'
+  bucket_seconds: number
+  min_gap_seconds: number
+  files: number
+  bytes: number
+  packets: number
+  overwritten: number
+  archived_hours: number
+  as_of?: string
+  feeds: EdgeHistoryFeed[]
+}
+
+export async function fetchEdgeHistory(range: EdgeHistoryRange): Promise<EdgeHistoryResponse> {
+  const res = await apiFetch(`/api/dz/edge/history?range=${encodeURIComponent(range)}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch edge history')
+  }
+  return res.json()
+}
+
 // Serviceability permission audit trail (internal only).
 export interface PermissionAuditEvent {
   eventTs: string
