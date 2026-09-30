@@ -4,7 +4,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/malbeclabs/lake/indexer/pkg/dz/pcapwarehouse"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -73,6 +75,7 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		"mroute sync failed",
 		"msdp sync failed",
 		"graph sync failed",
+		"pcap warehouse sync failed",
 		"telemetry usage refresh failed",
 		"permission events refresh failed",
 	}
@@ -96,6 +99,7 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		a.SyncIPMroute,
 		a.SyncMSDP,
 		a.SyncGraph,
+		a.SyncPCAPWarehouse,
 		a.RefreshTelemetryUsage,
 		a.RefreshPermissionEvents,
 	} {
@@ -143,4 +147,17 @@ func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) 
 	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
 		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), or cancellation lands mid-Flux and the insert never runs",
 		telemUsageStartToCloseTimeout, fluxBudget)
+}
+
+// The warehouse pass checks its budget only between hours, so the budget must leave room
+// under the activity deadline for the hour in flight when it runs out, and a pass must be
+// able to resolve before the loop's drain at continue-as-new.
+func TestLake_DZIngest_PCAPWarehouseBudgetFitsItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	require.Less(t, pcapwarehouse.DefaultBudget+time.Minute, pcapWarehouseStartToClose,
+		"a pass that exhausts its budget (%s) mid-hour must still finish inside the %s deadline",
+		pcapwarehouse.DefaultBudget, pcapWarehouseStartToClose)
+	require.GreaterOrEqual(t, time.Duration(pcapWarehouseStartLead)*refreshInterval, pcapWarehouseStartToClose,
+		"no pass may start close enough to continue-as-new that the drain waits on it")
 }

@@ -47,6 +47,17 @@ const (
 	// runs every ~5 minutes — enough freshness for an audit page while avoiding a
 	// per-minute getProgramAccounts poll.
 	permissionEventsEveryN = 5
+
+	// pcapWarehouseStartToClose bounds one SyncPCAPWarehouse pass, whose own budget
+	// (pcapwarehouse.DefaultBudget) is set inside it.
+	pcapWarehouseStartToClose = 5 * time.Minute
+
+	// pcapWarehouseStartLead is how many iterations before continue-as-new the loop
+	// stops starting warehouse passes: a pass resolves within
+	// pcapWarehouseStartToClose, so over the 60s interval (plus one for the cycle's own
+	// length) one started this far out is done by the time the loop drains it, and the
+	// drain never holds up the boundary.
+	pcapWarehouseStartLead = int(pcapWarehouseStartToClose/refreshInterval) + 1
 )
 
 // RegisterWorkflows registers all DZ ingest workflows with the given worker.
@@ -97,6 +108,18 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)
 
+	// The pcap warehouse pass is not waited on by the iteration that starts it. A
+	// backfill fills its whole budget for hours, and every other dataset here waits on
+	// the slowest activity of the cycle, so holding the loop for it would slow them all
+	// for as long as the backfill runs. A pass may span iterations instead, and the
+	// next starts only once it has resolved. IsReady resolves from workflow history,
+	// so the decision replays deterministically.
+	pcapWarehouseCtx := temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: pcapWarehouseStartToClose,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	var pcapWarehouseFuture temporalworkflow.Future
+
 	for iteration < continueAsNewThreshold {
 		// Serviceability must run first — other activities depend on its
 		// ClickHouse state (device/link/user dimension tables).
@@ -115,6 +138,14 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		mrouteSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncIPMroute)
 		msdpSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncMSDP)
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
+
+		if pcapWarehouseFuture != nil && pcapWarehouseFuture.IsReady() {
+			warnOnErr("pcap warehouse sync failed", pcapWarehouseFuture.Get(ctx, nil))
+			pcapWarehouseFuture = nil
+		}
+		if pcapWarehouseFuture == nil && iteration < continueAsNewThreshold-pcapWarehouseStartLead {
+			pcapWarehouseFuture = temporalworkflow.ExecuteActivity(pcapWarehouseCtx, (*Activities).SyncPCAPWarehouse)
+		}
 
 		// Telemetry usage runs every iteration (~1 minute) but under a dedicated
 		// longer deadline (telemUsageStartToCloseTimeout) because a refresh
@@ -201,6 +232,17 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return err
 			}
 		}
+	}
+
+	// Drain the outstanding warehouse pass: a pending activity is cancelled at the
+	// continue-as-new boundary. None starts within pcapWarehouseStartLead iterations of
+	// it, so this has already resolved and returns without blocking.
+	if pcapWarehouseFuture != nil {
+		err = pcapWarehouseFuture.Get(ctx, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		warnOnErr("pcap warehouse sync failed", err)
 	}
 
 	return temporalworkflow.NewContinueAsNewError(ctx, DZIngestWorkflow, 0)

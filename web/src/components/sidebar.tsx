@@ -43,6 +43,7 @@ import {
   KeyRound,
   LayoutDashboard,
   ExternalLink,
+  History,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -142,7 +143,9 @@ const { resolvedTheme, setTheme } = useTheme()
   const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
   const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute || isEdgeMulticastRoute
+  const isEdgeHistoryRoute = location.pathname === '/dz/edge/history'
+  const isEdgeRoute =
+    isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute || isEdgeMulticastRoute || isEdgeHistoryRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -621,6 +624,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
                 <Radio className="h-4 w-4" />
                 Multicast
+              </Link>
+            )}
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/history" className={navItemClass(isEdgeHistoryRoute)}>
+                <History className="h-4 w-4" />
+                History
               </Link>
             )}
             <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
