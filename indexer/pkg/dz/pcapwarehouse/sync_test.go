@@ -210,7 +210,7 @@ func TestSync_OneRecorderFailingDoesNotStopTheOthers(t *testing.T) {
 	s := newTestSyncer(t, src, st, time.Now, time.Minute)
 
 	res, err := s.Sync(t.Context())
-	require.ErrorContains(t, err, recA)
+	require.EqualError(t, err, "recorder "+recA+": access denied")
 	require.Equal(t, 1, res.FilesWritten)
 	require.Equal(t, "chi-mn-recorder1", st.rows[0].Recorder)
 }

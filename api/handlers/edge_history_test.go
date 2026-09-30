@@ -19,6 +19,7 @@ type pcapFile struct {
 	group, recorder, ip, key, manifest string
 	first, last, offload               time.Time
 	size                               uint64
+	empty                              bool // no packets captured
 }
 
 func insertPcapFiles(t *testing.T, api *handlers.API, files ...pcapFile) {
@@ -32,13 +33,17 @@ func insertPcapFiles(t *testing.T, api *handlers.API, files ...pcapFile) {
 		if manifest == "" {
 			manifest = "manifest-" + f.key
 		}
+		packets := 100
+		if f.empty {
+			packets = 0
+		}
 		err := api.DB.Exec(context.Background(), fmt.Sprintf(`
 			INSERT INTO fact_dz_edge_pcap_file
 			SELECT fromUnixTimestamp64Micro(%[1]d), now64(3), '%[3]s', '%[4]s',
 			       toStartOfHour(fromUnixTimestamp64Micro(%[1]d)), '%[5]s', '%[6]s', 0,
-			       %[7]d, 100, fromUnixTimestamp64Micro(%[2]d), '', '%[8]s',
+			       %[7]d, %[10]d, fromUnixTimestamp64Micro(%[2]d), '', '%[8]s',
 			       fromUnixTimestamp64Micro(%[9]d)`,
-			f.first.UnixMicro(), f.last.UnixMicro(), f.recorder, f.ip, f.key, f.group, f.size, manifest, offload.UnixMicro()))
+			f.first.UnixMicro(), f.last.UnixMicro(), f.recorder, f.ip, f.key, f.group, f.size, manifest, offload.UnixMicro(), packets))
 		require.NoError(t, err)
 	}
 }
@@ -178,4 +183,53 @@ func TestGetEdgeHistory_WindowOpensOnAnOutage(t *testing.T) {
 	assert.InDelta(t, 100*(span-r.GapSeconds)/span, r.CoveragePct, 0.05)
 	assert.Greater(t, r.CoveragePct, 20.0, "about two days of seven, not 0%")
 	assert.Equal(t, 0.0, r.BucketCoverage[0], "the window's first hour is missing, not outside the span")
+}
+
+// However long ago the last packet before the window was, an outage that opens the
+// window is found: here the recorder stopped 45 days ago and resumed 10 days ago, and
+// the 30-day window opens on 20 days of it.
+func TestGetEdgeHistory_OpeningOutageOfAnyLength(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	now := time.Now().UTC()
+	const g, rec, ip = "233.84.178.8", "aws-fra-mn-recorder1", "63.178.8.5"
+	stopped := now.Add(-45 * 24 * time.Hour).Truncate(time.Hour)
+	resumed := now.Add(-10 * 24 * time.Hour).Truncate(time.Hour)
+	insertPcapFiles(t, api,
+		pcapFile{group: g, recorder: rec, ip: ip, key: "old", first: stopped.Add(-time.Hour), last: stopped, size: 1},
+		pcapFile{group: g, recorder: rec, ip: ip, key: "new", first: resumed, last: now.Add(-time.Minute), size: 1},
+	)
+
+	resp := getEdgeHistory(t, api, "30d")
+	require.Len(t, resp.Feeds, 1)
+	r := resp.Feeds[0].Recorders[0]
+	require.Equal(t, 1, r.GapCount)
+	assert.True(t, r.Gaps[0].Start.Equal(resp.WindowStart))
+	assert.True(t, r.Gaps[0].End.Equal(resumed))
+	assert.Equal(t, 0.0, r.BucketCoverage[0], "the window's first day is missing, not outside the span")
+}
+
+// A zero-packet file carries no packet times, so it neither stretches the span nor
+// makes a stopped recorder read as live; it still counts as a file.
+func TestGetEdgeHistory_EmptyFilesDoNotDefineTheSpan(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	now := time.Now().UTC()
+	const g, rec, ip = "233.84.178.30", "aws-was-mn-recorder1", "18.232.43.98"
+	h := now.Add(-10 * time.Hour).Truncate(time.Hour)
+	recent := now.Truncate(time.Hour)
+	insertPcapFiles(t, api,
+		pcapFile{group: g, recorder: rec, ip: ip, key: "data", first: h, last: h.Add(time.Hour), size: 5},
+		pcapFile{group: g, recorder: rec, ip: ip, key: "empty", first: recent, last: recent, size: 24, empty: true},
+	)
+
+	resp := getEdgeHistory(t, api, "7d")
+	require.Len(t, resp.Feeds, 1)
+	r := resp.Feeds[0].Recorders[0]
+	assert.Equal(t, uint64(2), r.Files)
+	assert.True(t, r.LastTS.Equal(h.Add(time.Hour)), "the span ends at the last captured packet")
+	assert.False(t, r.Live)
+	assert.Equal(t, 100.0, r.CoveragePct)
 }

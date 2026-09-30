@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from 'react'
-import type { PointerEvent } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent, PointerEvent } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { AlertCircle, ChevronDown, ChevronRight, History, Loader2 } from 'lucide-react'
 import { PageHeader } from './page-header'
@@ -190,6 +190,16 @@ function Timeline({
     return out
   }, [rec.bucket_coverage, rec.bucket_bytes, mode, rowMax])
 
+  const lines = (i: number): string[] => {
+    const start = axis.startMs + i * axis.bucketSecs * 1000
+    const c = rec.bucket_coverage[i] ?? -1
+    const out = [bucketLabel(start, axis.bucketSecs), coverageLabel(c)]
+    if (c >= 0 || (rec.bucket_bytes[i] ?? 0) > 0) {
+      out.push(formatBytes(rec.bucket_bytes[i] ?? 0))
+    }
+    return out
+  }
+
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
     const box = e.currentTarget.getBoundingClientRect()
     const i = Math.floor(((e.clientX - box.left) / box.width) * axis.n)
@@ -197,30 +207,70 @@ function Timeline({
       onHover(null)
       return
     }
-    const start = axis.startMs + i * axis.bucketSecs * 1000
-    const c = rec.bucket_coverage[i] ?? -1
-    const lines = [bucketLabel(start, axis.bucketSecs), coverageLabel(c)]
-    if (c >= 0 || (rec.bucket_bytes[i] ?? 0) > 0) {
-      lines.push(formatBytes(rec.bucket_bytes[i] ?? 0))
-    }
-    onHover({ x: e.clientX, y: box.top, lines })
+    onHover({ x: e.clientX, y: box.top, lines: lines(i) })
+  }
+
+  // Keyboard access: the strip is a slider over its buckets. Arrows step one bucket,
+  // Page Up/Down a day of hours or a week of days, Home/End the ends; the bucket under
+  // the cursor is read out through aria-valuetext and shown in the same tooltip hover
+  // uses, so every value the pointer can reach the keyboard can too.
+  const [cursor, setCursor] = useState<number | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const showAt = (i: number) => {
+    setCursor(i)
+    const box = wrapRef.current?.getBoundingClientRect()
+    if (box) onHover({ x: box.left + ((i + 0.5) / axis.n) * box.width, y: box.top, lines: lines(i) })
+  }
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const page = axis.bucketSecs >= 86400 ? 7 : 24
+    const at = cursor ?? axis.n - 1
+    const next =
+      e.key === 'ArrowRight' ? at + 1
+      : e.key === 'ArrowLeft' ? at - 1
+      : e.key === 'PageUp' ? at + page
+      : e.key === 'PageDown' ? at - page
+      : e.key === 'Home' ? 0
+      : e.key === 'End' ? axis.n - 1
+      : null
+    if (next === null) return
+    e.preventDefault()
+    showAt(Math.max(0, Math.min(axis.n - 1, next)))
   }
 
   return (
-    <svg
-      className="block w-full h-4 cursor-crosshair"
-      viewBox={`0 0 ${axis.n} 1`}
-      preserveAspectRatio="none"
-      onPointerMove={onMove}
-      onPointerLeave={() => onHover(null)}
-      role="img"
-      aria-label={`${rec.recorder} capture timeline`}
+    <div
+      ref={wrapRef}
+      tabIndex={0}
+      role="slider"
+      aria-label={`${siteLabel(rec)} ${rec.recorder} capture timeline — ${(Math.floor(rec.coverage_pct * 100) / 100).toFixed(2)}% covered, ${rec.gap_count} gap${rec.gap_count === 1 ? '' : 's'}`}
+      aria-valuemin={0}
+      aria-valuemax={axis.n - 1}
+      aria-valuenow={cursor ?? axis.n - 1}
+      aria-valuetext={lines(cursor ?? axis.n - 1).join(', ')}
+      onKeyDown={onKeyDown}
+      // Keyboard focus only: a click focuses the strip too, and the pointer is already
+      // showing its own bucket there.
+      onFocus={(e) => e.currentTarget.matches(':focus-visible') && showAt(cursor ?? axis.n - 1)}
+      onBlur={() => onHover(null)}
+      className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
     >
-      <rect x={0} y={0} width={axis.n} height={1} className="fill-muted" />
-      {runs.map((r) => (
-        <rect key={r.x} x={r.x} y={0} width={r.w} height={1} fill={r.fill} />
-      ))}
-    </svg>
+      <svg
+        className="block w-full h-4 cursor-crosshair"
+        viewBox={`0 0 ${axis.n} 1`}
+        preserveAspectRatio="none"
+        onPointerMove={onMove}
+        onPointerLeave={() => onHover(null)}
+        aria-hidden="true"
+      >
+        <rect x={0} y={0} width={axis.n} height={1} className="fill-muted" />
+        {runs.map((r) => (
+          <rect key={r.x} x={r.x} y={0} width={r.w} height={1} fill={r.fill} />
+        ))}
+        {cursor !== null && (
+          <rect x={cursor} y={0} width={1} height={1} fill="none" className="stroke-foreground" strokeWidth={0.15} vectorEffect="non-scaling-stroke" />
+        )}
+      </svg>
+    </div>
   )
 }
 
@@ -272,6 +322,7 @@ function Segmented<T extends string>({
         <button
           key={o.key}
           type="button"
+          aria-pressed={value === o.key}
           onClick={() => onChange(o.key)}
           className={`px-2.5 py-1 rounded ${value === o.key ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
         >
@@ -421,24 +472,38 @@ function FeedSection({
       </div>
       {feed.recorders.map((rec) => {
         const key = `${feed.multicast_group}|${rec.recorder}`
+        const detailId = `edge-history-${feed.multicast_group}-${rec.recorder}`
         const open = expanded.has(key)
         return (
           <Fragment key={key}>
-            <button
-              type="button"
+            {/* The row is not itself a button: the timeline inside it takes focus for
+                keyboard scrubbing, and a focusable control cannot sit inside a button.
+                The recorder cell is the expander; a click anywhere else on the row is a
+                pointer convenience for the same thing. */}
+            <div
               onClick={() => onToggle(key)}
-              className={`${GRID} w-full text-left px-3 py-1.5 text-sm border-t border-border hover:bg-muted/40`}
-              aria-expanded={open}
+              className={`${GRID} w-full text-left px-3 py-1.5 text-sm border-t border-border hover:bg-muted/40 cursor-pointer`}
             >
-              <span className="flex items-center gap-1 min-w-0" title={rec.recorder}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggle(key)
+                }}
+                aria-expanded={open}
+                aria-controls={detailId}
+                className="flex items-center gap-1 min-w-0 text-left rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                title={rec.recorder}
+              >
                 {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
                 <span className="font-medium">{siteLabel(rec)}</span>
+                <span className="sr-only">{rec.recorder}, details</span>
                 {rec.instances.length > 1 && (
                   <span className="text-[10px] text-muted-foreground" title="Rebuilt on a new public IP">
                     ×{rec.instances.length}
                   </span>
                 )}
-              </span>
+              </button>
               <span className="text-xs text-muted-foreground">{day(rec.first_ts)}</span>
               <StatusCell rec={rec} now={now} />
               <span className={`text-right tabular-nums ${coverageTone(rec.coverage_pct)}`}>
@@ -464,9 +529,9 @@ function FeedSection({
                 )}
               </span>
               <Timeline rec={rec} axis={axis} mode={mode} onHover={onHover} />
-            </button>
+            </div>
             {open && (
-              <div className="px-3 border-t border-border bg-muted/20">
+              <div id={detailId} className="px-3 border-t border-border bg-muted/20">
                 <RecorderDetail rec={rec} minGap={minGap} />
               </div>
             )}
@@ -604,8 +669,14 @@ export function EdgeHistoryPage() {
       </div>
       {hover && (
         <div
-          className="pointer-events-none fixed z-50 rounded-md border border-border bg-popover px-2 py-1.5 text-xs shadow-md"
-          style={{ left: hover.x + 12, top: hover.y - 8, transform: 'translateY(-100%)' }}
+          className="pointer-events-none fixed z-50 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1.5 text-xs shadow-md"
+          // Flipped to the cursor's left near the right edge, where it would otherwise be
+          // squeezed against the viewport and wrap.
+          style={{
+            left: hover.x + 12,
+            top: hover.y - 8,
+            transform: hover.x > window.innerWidth - 260 ? 'translate(calc(-100% - 24px), -100%)' : 'translateY(-100%)',
+          }}
         >
           {hover.lines.map((l, i) => (
             <div key={i} className={i === 0 ? 'font-medium' : 'text-muted-foreground'}>

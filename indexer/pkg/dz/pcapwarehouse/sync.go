@@ -296,8 +296,11 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 			rows, err := ParseManifest(data, rec, hour, key)
 			if err != nil {
 				// A malformed manifest is the recorder's defect, not a reason to stop
-				// ingesting everything behind it. It is re-read while its hour is
-				// inside the rescan window and dropped after.
+				// ingesting everything behind it. It is logged once and remembered as
+				// barren, so later passes skip it until its hour leaves the rescan
+				// window; a restart forgets it, and it is read (and logged) once more.
+				// A manifest corrected in place inside the window is therefore not
+				// re-read by this process.
 				s.cfg.Logger.Warn("pcapwarehouse: skipping unreadable manifest", "key", key, "error", err)
 				mu.Lock()
 				skipped++

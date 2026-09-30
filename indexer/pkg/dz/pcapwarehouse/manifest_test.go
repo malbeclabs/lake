@@ -73,7 +73,28 @@ func TestParseManifest(t *testing.T) {
 func TestParseManifest_RejectsUnknownVersion(t *testing.T) {
 	rec, _ := ParseRecorder("chi-mn-recorder1-208.78.39.181")
 	_, err := ParseManifest([]byte("manifest_version: 2\nfiles: []\n"), rec, time.Now(), "k")
-	require.ErrorContains(t, err, "unsupported manifest_version 2")
+	require.EqualError(t, err, "manifest k: unsupported manifest_version 2")
+}
+
+func TestParseManifest_RejectsCapturedFileWithoutAPacketRange(t *testing.T) {
+	rec, _ := ParseRecorder("chi-mn-recorder1-208.78.39.181")
+	hour := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	const prefix = "manifest k: file capture_233.84.178.15_000001.pcap captured 10 packets with an invalid packet range "
+	for name, c := range map[string]struct{ times, want string }{
+		"missing first": {`last_packet_utc: "2026-09-30T10:00:09Z"`, prefix + `("" to "2026-09-30T10:00:09Z")`},
+		"missing last":  {`first_packet_utc: "2026-09-30T10:00:00Z"`, prefix + `("2026-09-30T10:00:00Z" to "")`},
+		"reversed": {
+			"first_packet_utc: \"2026-09-30T10:00:09Z\"\n      last_packet_utc: \"2026-09-30T10:00:00Z\"",
+			prefix + `("2026-09-30T10:00:09Z" to "2026-09-30T10:00:00Z")`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := "manifest_version: 1\nfiles:\n    - filename: capture_233.84.178.15_000001.pcap\n      packets_captured: 10\n      multicast_group: 233.84.178.15\n      " + c.times + "\n"
+			rows, err := ParseManifest([]byte(data), rec, hour, "k")
+			require.Nil(t, rows)
+			require.EqualError(t, err, c.want)
+		})
+	}
 }
 
 func TestParseRecorder(t *testing.T) {
@@ -81,8 +102,14 @@ func TestParseRecorder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Recorder{Prefix: "aws-tyo-mn-recorder1-54.168.241.102", Host: "aws-tyo-mn-recorder1", IP: "54.168.241.102"}, rec)
 
-	for _, bad := range []string{"", "recorder", "host-", "-1.2.3.4", "host-notanip"} {
+	for bad, want := range map[string]string{
+		"":             `recorder prefix "" is not <host>-<ip>`,
+		"recorder":     `recorder prefix "recorder" is not <host>-<ip>`,
+		"host-":        `recorder prefix "host-" is not <host>-<ip>`,
+		"-1.2.3.4":     `recorder prefix "-1.2.3.4" is not <host>-<ip>`,
+		"host-notanip": `recorder prefix "host-notanip" does not end in an IP address`,
+	} {
 		_, err := ParseRecorder(bad)
-		require.Error(t, err, bad)
+		require.EqualError(t, err, want, bad)
 	}
 }

@@ -38,10 +38,6 @@ const (
 	// edgeHistoryMaxGaps caps the gap list per (feed, recorder) in the payload; the
 	// counts and totals always cover every gap.
 	edgeHistoryMaxGaps = 200
-
-	// edgeHistoryGapLookback is how far before the window a gap query reads, so a
-	// hole straddling the window's start is still found from the file before it.
-	edgeHistoryGapLookback = 7 * 24 * time.Hour
 )
 
 // EdgeHistoryPageCacheKey holds the page's default view, the whole history. It is the
@@ -209,6 +205,11 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		gaps      = map[edgeHistoryKey][]EdgeHistoryGap{}
 		buckets   []bucketRow
 		codes     map[string]string
+		// The first file inside the window per (feed, recorder), and the last packet
+		// before the window, however long ago: the hole between them is a gap that
+		// opens the window, which a scan of the window alone cannot see.
+		firstInWindow = map[edgeHistoryKey]time.Time{}
+		lastBefore    = map[edgeHistoryKey]time.Time{}
 	)
 
 	// The four reads are independent once the window is fixed, and each scans the
@@ -220,7 +221,13 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		start := time.Now()
 		rows, err := db.Query(gctx, `
 			SELECT multicast_group, recorder, recorder_ip,
-			       min(first_packet_ts), max(last_packet_ts),
+			       -- The span and the live status come from files that captured
+			       -- something: a zero-packet file carries no packet times (the indexer
+			       -- stamps it with its hour directory), so it must not stretch the
+			       -- span over hours nothing was captured in. It still counts as a file
+			       -- and its bytes; an instance with only such files falls back to them.
+			       if(countIf(packets > 0) > 0, minIf(first_packet_ts, packets > 0), min(first_packet_ts)),
+			       if(countIf(packets > 0) > 0, maxIf(last_packet_ts, packets > 0), max(last_packet_ts)),
 			       count(), sum(size_bytes), sum(packets), max(ingested_at), toUInt64(sum(versions - 1))
 			FROM dz_edge_pcap_file_current
 			WHERE hour_ts >= ?
@@ -244,11 +251,12 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 	// Gaps: the hole between each file's first packet and the latest last packet of
 	// every file before it, for one feed at one recorder host. The host rather than
 	// the instance, so a recorder rebuilt on a new address reads as one history with
-	// the rebuild as its gap.
+	// the rebuild as its gap. The first file of each series is returned too, to be
+	// joined with lastBefore below.
 	g.Go(func() error {
 		start := time.Now()
 		rows, err := db.Query(gctx, `
-			SELECT multicast_group, recorder, prev_last, first_ts
+			SELECT multicast_group, recorder, prev_last, first_ts, rn
 			FROM (
 				SELECT multicast_group, recorder, first_packet_ts AS first_ts,
 				       max(last_packet_ts) OVER (
@@ -265,11 +273,10 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 				-- with its hour directory), so it bounds nothing and must not split a gap.
 				WHERE hour_ts >= ? AND packets > 0
 			)
-			WHERE rn > 1
-			  AND first_ts >= ?
-			  AND dateDiff('millisecond', prev_last, first_ts) >= ?
+			WHERE rn = 1
+			   OR (first_ts >= ? AND dateDiff('millisecond', prev_last, first_ts) >= ?)
 			ORDER BY multicast_group, recorder, first_ts
-		`, windowStart.Add(-edgeHistoryGapLookback).Truncate(time.Hour), windowStart, edgeHistoryMinGap.Milliseconds())
+		`, windowStart.Truncate(time.Hour), windowStart, edgeHistoryMinGap.Milliseconds())
 		metrics.RecordClickHouseQuery("edge_history_gaps", time.Since(start), err)
 		if err != nil {
 			return err
@@ -278,8 +285,13 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		for rows.Next() {
 			var k edgeHistoryKey
 			var from, to time.Time
-			if err := rows.Scan(&k.group, &k.recorder, &from, &to); err != nil {
+			var rn uint64
+			if err := rows.Scan(&k.group, &k.recorder, &from, &to, &rn); err != nil {
 				return err
+			}
+			if rn == 1 {
+				firstInWindow[k] = to.UTC()
+				continue
 			}
 			from = from.UTC()
 			if from.Before(windowStart) {
@@ -289,6 +301,33 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 		}
 		return rows.Err()
 	})
+
+	// The last packet before the window, for ranges that have a before.
+	if rng.span > 0 {
+		g.Go(func() error {
+			start := time.Now()
+			rows, err := db.Query(gctx, `
+				SELECT multicast_group, recorder, max(last_packet_ts)
+				FROM dz_edge_pcap_file_current
+				WHERE hour_ts < ? AND packets > 0
+				GROUP BY multicast_group, recorder
+			`, windowStart.Truncate(time.Hour))
+			metrics.RecordClickHouseQuery("edge_history_before", time.Since(start), err)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var k edgeHistoryKey
+				var last time.Time
+				if err := rows.Scan(&k.group, &k.recorder, &last); err != nil {
+					return err
+				}
+				lastBefore[k] = last.UTC()
+			}
+			return rows.Err()
+		})
+	}
 
 	// Volume per bucket.
 	g.Go(func() error {
@@ -330,6 +369,18 @@ func (a *API) FetchEdgeHistoryData(ctx context.Context, rangeName string, now ti
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+	for k, first := range firstInWindow {
+		last, ok := lastBefore[k]
+		if !ok || !first.After(windowStart) || first.Sub(last) < edgeHistoryMinGap {
+			continue
+		}
+		from := last
+		if from.Before(windowStart) {
+			from = windowStart
+		}
+		// The earliest gap of the series, so it goes first and the list stays in order.
+		gaps[k] = append([]EdgeHistoryGap{{Start: from, End: first, Seconds: first.Sub(from).Seconds()}}, gaps[k]...)
 	}
 
 	var asOf time.Time
@@ -440,9 +491,8 @@ func edgeHistoryFinishRecorder(rec *EdgeHistoryRecorder, gaps []EdgeHistoryGap, 
 	if spanStart.Before(windowStart) {
 		spanStart = windowStart
 	}
-	// A gap found from a file before the window (the gap query looks back
-	// edgeHistoryGapLookback) ends at the first file inside it, so it lies before
-	// FirstTS. The recorder was capturing this feed before the window, and the window
+	// A gap found from the last packet before the window ends at the first file
+	// inside it, so it lies before FirstTS. The recorder was capturing this feed before the window, and the window
 	// opened on an outage: the span starts where that gap does, or the gap would be
 	// subtracted from a span it is not part of and the buckets it covers would read
 	// "not recording".

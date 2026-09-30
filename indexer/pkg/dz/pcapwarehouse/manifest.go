@@ -58,7 +58,8 @@ func ParseRecorder(prefix string) (Recorder, error) {
 //
 // A file with no packets carries no packet timestamps, so it is stamped with the hour
 // it was filed under: it still counts as a file and its bytes, and contributes no
-// coverage beyond that instant.
+// coverage beyond that instant. A file that captured packets must carry a valid packet
+// range, or the whole manifest is refused.
 func ParseManifest(data []byte, rec Recorder, hour time.Time, key string) ([]FileRow, error) {
 	var m manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
@@ -89,11 +90,20 @@ func ParseManifest(data []byte, rec Recorder, hour time.Time, key string) ([]Fil
 		if err != nil {
 			return nil, fmt.Errorf("manifest %s: file %s last_packet_utc: %w", key, f.Filename, err)
 		}
-		if first.IsZero() {
-			first = hour
-		}
-		if last.IsZero() || last.Before(first) {
-			last = first
+		if f.PacketsCaptured == 0 {
+			// Nothing captured, so nothing to time: the file sits at its hour.
+			if first.IsZero() {
+				first = hour
+			}
+			if last.IsZero() || last.Before(first) {
+				last = first
+			}
+		} else if first.IsZero() || last.IsZero() || last.Before(first) {
+			// A file that captured packets without a valid packet range would enter the
+			// gap arithmetic as an instant it did not cover, so it is refused rather
+			// than repaired.
+			return nil, fmt.Errorf("manifest %s: file %s captured %d packets with an invalid packet range (%q to %q)",
+				key, f.Filename, f.PacketsCaptured, f.FirstPacketUTC, f.LastPacketUTC)
 		}
 		s3Key := f.S3Key
 		if s3Key == "" {
