@@ -1001,6 +1001,20 @@ The one thing a line does NOT repeat is its verdict: `Health` is per (path, grou
 floor status together with what the recorders saw, which is why a line can read `publishing` beside
 a `gapped` badge.
 
+## Sidebar: Edge Section
+
+`web/src/components/sidebar.tsx`. The Edge section holds venues only, **alphabetical** (Hyperliquid,
+Kalshi, Phoenix, Shreds). Insert a new venue in order, not at the end. Cross-venue views are not
+venues and go elsewhere: Edge Multicast sits under Ops.
+
+Every venue is a **parent item with sub-items**, even when it has only one page:
+
+- The parent links to the venue's default page and uses `isXRoute ? navItemExpandedClass : navItemClass(false)`,
+  where `isXRoute` is a `startsWith('/dz/<venue>')` check.
+- Under `{isXRoute && (...)}`, each page is a `subNavItemClass(isXPageRoute)` link. A scoreboard is
+  labelled `Scoreboard`, so a single-page venue still shows it when opened.
+- Add `isXRoute` to `isEdgeRoute` so the collapsed rail highlights Edge.
+
 ## Basemap Tiles
 
 `web/src/lib/basemap.ts` owns the CARTO tile URL for every map surface. Two things must move
