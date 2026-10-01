@@ -21,7 +21,6 @@ import (
 // pages through the lake-api-errors alert. A real failure at the same site must
 // still log at ERR. These tests swap the global slog default, so none is parallel.
 
-// recordLogs captures every record logged for the rest of the test.
 func recordLogs(t *testing.T) *[]slog.Record {
 	t.Helper()
 	var recs []slog.Record
@@ -31,7 +30,6 @@ func recordLogs(t *testing.T) *[]slog.Record {
 	return &recs
 }
 
-// requireLoggedAt asserts msg was logged exactly once, at level.
 func requireLoggedAt(t *testing.T, recs []slog.Record, msg string, level slog.Level) {
 	t.Helper()
 	var found []slog.Record
