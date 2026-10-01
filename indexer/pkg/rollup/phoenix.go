@@ -199,7 +199,9 @@ func (a *Activities) phoenixRaceStored(ctx context.Context) (map[string]phoenixS
 }
 
 // writePhoenixRaceWindows recomputes every window in [start, end) for one site in one
-// INSERT ... SELECT, so no race row crosses into the indexer.
+// INSERT ... SELECT, so no race row crosses into the indexer. Only a state seen in the window can
+// race, so the history is grouped for those states alone and the scan's memory follows the window,
+// not the recorder's whole history.
 func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSite, start, end, ingestedAt time.Time) (int, error) {
 	n := int(end.Sub(start) / phoenixBucket)
 
@@ -212,6 +214,16 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 			buckets AS (
 				SELECT toDateTime(?, 'UTC') + toIntervalSecond(number * %[3]d) AS bucket_ts
 				FROM numbers(?)
+			),
+			seen AS (
+				SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
+				FROM %[1]s
+				WHERE feed = ? AND observation = ? AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
+				UNION ALL
+				SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
+				FROM %[2]s
+				WHERE feed = ? AND observation = ? AND from_anchor = 0 AND book_key != 0
+				  AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
 			),
 			races AS (
 				SELECT
@@ -227,16 +239,8 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 						(toUnixTimestamp64Nano(max(first_seen.1)) - toUnixTimestamp64Nano(min(first_seen.1))) / 1e6 AS lead_ms
 					FROM (
 						SELECT observation, book_state, min((recv_ts, price_exp, qty_exp)) AS first_seen
-						FROM (
-							SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
-							FROM %[1]s
-							WHERE feed = ? AND observation = ? AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
-							UNION ALL
-							SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
-							FROM %[2]s
-							WHERE feed = ? AND observation = ? AND from_anchor = 0 AND book_key != 0
-							  AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
-						)
+						FROM seen
+						WHERE book_state IN (SELECT book_state FROM seen WHERE recv_ts >= toDateTime(?, 'UTC'))
 						GROUP BY observation, book_state
 						HAVING first_seen.1 >= toDateTime(?, 'UTC')
 					)
@@ -280,10 +284,10 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 	err := heartbeatDuring(ctx, "computing phoenix race rollup", func() error {
 		return a.ClickHouse.Exec(queryCtx, query,
 			start.Unix(), n,
-			site.DZRecorder, site.VenueRecorder, site.DZRecorder,
 			phoenixFeed, site.VenueRecorder, cutoff,
 			phoenixFeed, site.DZRecorder, cutoff,
-			start.Unix(),
+			site.DZRecorder, site.VenueRecorder, site.DZRecorder,
+			start.Unix(), start.Unix(),
 			phoenixMaxLeadMs,
 			start.Unix(), end.Unix(),
 			site.Code, ingestedAt.UTC().Format("2006-01-02 15:04:05.000"),
