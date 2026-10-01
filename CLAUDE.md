@@ -231,7 +231,17 @@ with two `argMin` states that peaked between 4 and 8 GB. So each state is keyed 
 `cityHash64(symbol_key, book_key)` and carries one `min((recv_ts, price_exp, qty_exp))`, and the
 scan is capped at 2 GB and spills its aggregation past 1 GB, the limits the API's heavy queries use.
 It gives the same numbers in 2-7s per site, and a runaway scan fails into the backoff instead of
-pressing on the cluster. Do not judge its memory by the `X-ClickHouse-Summary` header, which read
+pressing on the cluster.
+
+That still grew with the history, because every state ever seen was a group: from 2026-09-29
+Columbus's scan spilled past 1 GB and then failed its 2 GB cap merging the spill back, and from
+2026-10-01 17:00 UTC it failed every pass. Only a state seen in the window can race, so the scan now
+keeps the rows of the window's states alone (`book_state IN` the states `seen` in the window) before
+grouping. Those states keep their earlier rows, so a state first seen before the window still drops
+out and the numbers are unchanged; checked window for window against the old query. The scan's
+memory now follows the window, not the history: about 270 MiB for a 4-hour pass over two days of
+history and over five, where the old scan sat at its 1 GB spill for both and spilled more as the
+history grew. It still reads the full history, which the TTL caps. Do not judge its memory by the `X-ClickHouse-Summary` header, which read
 80 MiB for the same query: measure against `max_memory_usage` instead. It reads them without `FINAL`: a `ReplacingMergeTree` duplicate is the
 same row again, which changes no `min` or `argMin`, and `FINAL` does not reach through the local
 `remoteSecure` proxies.

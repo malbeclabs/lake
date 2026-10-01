@@ -313,6 +313,38 @@ func TestRollupPhoenixRace_HealReplacesAWindow(t *testing.T) {
 	assert.EqualValues(t, 1, got.venue)
 }
 
+// The scan's memory follows the book states seen in the window, not the recorder's whole history.
+// Every history state here was seen only before the window, so none of them can race.
+func TestRollupPhoenixRace_MemoryFollowsTheWindowNotTheHistory(t *testing.T) {
+	t.Parallel()
+	conn, db := setupPhoenixBookTops(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db}
+
+	now := time.Now().UTC()
+	start, end, _ := phoenixRaceWindow(now, time.Time{})
+	bucket := end.Add(-phoenixBucket)
+	insertPhoenixObs(t, conn, race(cmh.DZRecorder, cmh.VenueRecorder, bucket.Add(time.Minute), 100))
+
+	const history = 2_000_000
+	require.NoError(t, conn.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO venue_book_top
+		SELECT ?, ?, 'SOL-PERP', toUInt64(1000000000000 + number), toDateTime64(? - 60 - (number %% 86400), 9, 'UTC'), -2, -3
+		FROM numbers(%d)`, history), cmh.VenueRecorder, phoenixFeed, start.Unix()))
+
+	_, err := a.writePhoenixRaceWindows(t.Context(), cmh, start, end, now)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, readPhoenixRollup(t, conn, cmh.Code)[bucket].paired)
+
+	require.NoError(t, conn.Exec(t.Context(), `SYSTEM FLUSH LOGS`))
+	var peak uint64
+	require.NoError(t, conn.QueryRow(t.Context(), `
+		SELECT max(memory_usage) FROM system.query_log
+		WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND current_database = ?
+		  AND query LIKE '%INSERT INTO phoenix_race_rollup_15m%'`, db).Scan(&peak))
+	t.Logf("peak memory %d MiB over %d history states", peak>>20, history)
+	assert.Less(t, peak, uint64(256<<20), "the scan groups the history, not the window")
+}
+
 func TestRecorderDatabaseForNetwork_MainnetOnly(t *testing.T) {
 	t.Setenv("CLICKHOUSE_RECORDER_DB", "recorder")
 	for network, want := range map[string]string{
