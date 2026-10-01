@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -837,6 +838,9 @@ func (a *API) fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, deviceP
 	}, nil
 }
 
+// errLinkNotFound is a link pk with no metadata: an ordinary lookup miss, not a failure.
+var errLinkNotFound = errors.New("link not found")
+
 // fetchSingleLinkHistoryFromRollup returns the history for a single link using rollup tables.
 func (a *API) fetchSingleLinkHistoryFromRollupCustom(ctx context.Context, linkPK string, startTime, endTime time.Time, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
 	params := parseBucketParamsCustom(startTime, endTime, requestedBuckets)
@@ -911,7 +915,7 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 	}
 
 	if meta == nil {
-		return nil, fmt.Errorf("link not found: %s", linkPK)
+		return nil, fmt.Errorf("%w: %s", errLinkNotFound, linkPK)
 	}
 
 	// Index interface data by (bucket, side)

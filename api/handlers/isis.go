@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -232,6 +233,27 @@ type PathResponse struct {
 	Error       string    `json:"error,omitempty"`
 }
 
+// errNoRecords is a Cypher query that matched nothing: an expected lookup miss.
+var errNoRecords = errors.New("result contains no records")
+
+// singleRecord is result.Single with zero records reported as errNoRecords.
+// Single returns the same untyped UsageError for zero records and for more than
+// one, and only the first is a miss; more than one is a query bug.
+func singleRecord(ctx context.Context, result neo4j.Result) (*neo4jdriver.Record, error) {
+	records, err := result.Collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch len(records) {
+	case 0:
+		return nil, errNoRecords
+	case 1:
+		return records[0], nil
+	default:
+		return nil, fmt.Errorf("result contains %d records, want one", len(records))
+	}
+}
+
 // GetISISPath finds the shortest path between two devices using ISIS metrics
 func (a *API) GetISISPath(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -279,9 +301,13 @@ func (a *API) GetISISPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := result.Single(ctx)
+	record, err := singleRecord(ctx, result)
 	if err != nil {
-		logError("ISIS path no result", "error", err)
+		if errors.Is(err, errNoRecords) {
+			logWarn("ISIS path no result", "error", err)
+		} else {
+			logError("ISIS path no result", "error", err)
+		}
 		writeJSON(w, PathResponse{Error: "No path found between devices"})
 		return
 	}
@@ -3080,9 +3106,13 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := result.Single(ctx)
+	record, err := singleRecord(ctx, result)
 	if err != nil {
-		logError("metro device paths metro query no result", "error", err)
+		if errors.Is(err, errNoRecords) {
+			logWarn("metro device paths metro query no result", "error", err)
+		} else {
+			logError("metro device paths metro query no result", "error", err)
+		}
 		response.Error = "One or both metros not found"
 		writeJSON(w, response)
 		return
