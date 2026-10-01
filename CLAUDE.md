@@ -1070,7 +1070,7 @@ a `gapped` badge.
 
 `web/src/components/sidebar.tsx`. The Edge section holds venues only, **alphabetical** (Hyperliquid,
 Kalshi, Phoenix, Shreds). Insert a new venue in order, not at the end. Cross-venue views are not
-venues and go elsewhere: Edge Multicast and Edge History sit under Ops.
+venues and go elsewhere: Edge Multicast and Edge History sit under Ops, which is also alphabetical.
 
 Every venue is a **parent item with sub-items**, even when it has only one page:
 

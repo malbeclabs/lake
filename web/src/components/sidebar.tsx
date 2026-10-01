@@ -574,12 +574,24 @@ const { resolvedTheme, setTheme } = useTheme()
           </div>
         </div>
 
-        {/* Ops section */}
+        {/* Ops section: alphabetical */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Ops</span>
           </div>
           <div className="space-y-1">
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/history" className={navItemClass(isEdgeHistoryRoute)}>
+                <History className="h-4 w-4" />
+                Edge History
+              </Link>
+            )}
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
+                <Radio className="h-4 w-4" />
+                Edge Multicast
+              </Link>
+            )}
             <Link
               to="/ops/incidents/links"
               className={isOpsIncidentsRoute ? navItemExpandedClass : navItemClass(false)}
@@ -610,18 +622,6 @@ const { resolvedTheme, setTheme } = useTheme()
               <BarChart3 className="h-4 w-4" />
               Network Health Reporting
             </Link>
-            {showEdgeMulticast && (
-              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
-                <Radio className="h-4 w-4" />
-                Edge Multicast
-              </Link>
-            )}
-            {showEdgeMulticast && (
-              <Link to="/dz/edge/history" className={navItemClass(isEdgeHistoryRoute)}>
-                <History className="h-4 w-4" />
-                Edge History
-              </Link>
-            )}
           </div>
         </div>
 
