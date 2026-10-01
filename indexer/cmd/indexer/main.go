@@ -144,6 +144,11 @@ func run() error {
 	mrouteS3RegionFlag := flag.String("mroute-s3-region", "us-east-1", "AWS region for mroute S3 bucket (or set MROUTE_S3_REGION env var)")
 	mrouteS3KeyPrefixFlag := flag.String("mroute-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MROUTE_S3_KEY_PREFIX env var)")
 
+	// Multicast pcap warehouse configuration
+	pcapWarehouseS3BucketFlag := flag.String("pcap-warehouse-s3-bucket", "", "S3 bucket the edge recorders offload pcaps to; empty disables indexing it (or set PCAP_WAREHOUSE_S3_BUCKET env var)")
+	pcapWarehouseS3RegionFlag := flag.String("pcap-warehouse-s3-region", "us-east-1", "AWS region for the pcap warehouse bucket (or set PCAP_WAREHOUSE_S3_REGION env var)")
+	pcapWarehouseS3KeyPrefixFlag := flag.String("pcap-warehouse-s3-key-prefix", "", "Network directory inside the pcap warehouse bucket; empty means the --dz-env name, so an indexer never reads another network's captures into its database (or set PCAP_WAREHOUSE_S3_KEY_PREFIX env var)")
+
 	// MSDP (state-collect) configuration
 	msdpEnabledFlag := flag.Bool("msdp-enabled", false, "Enable MSDP state-collect sync from S3 (or set MSDP_ENABLED env var)")
 	msdpS3BucketFlag := flag.String("msdp-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MSDP_S3_BUCKET env var)")
@@ -244,6 +249,17 @@ func run() error {
 	}
 	if envMroutePrefix := os.Getenv("MROUTE_S3_KEY_PREFIX"); envMroutePrefix != "" {
 		*mrouteS3KeyPrefixFlag = envMroutePrefix
+	}
+
+	// Override pcap warehouse flags with environment variables if set
+	if v := os.Getenv("PCAP_WAREHOUSE_S3_BUCKET"); v != "" {
+		*pcapWarehouseS3BucketFlag = v
+	}
+	if v := os.Getenv("PCAP_WAREHOUSE_S3_REGION"); v != "" {
+		*pcapWarehouseS3RegionFlag = v
+	}
+	if v := os.Getenv("PCAP_WAREHOUSE_S3_KEY_PREFIX"); v != "" {
+		*pcapWarehouseS3KeyPrefixFlag = v
 	}
 
 	// Override MSDP flags with environment variables if set
@@ -675,6 +691,11 @@ func run() error {
 		MSDPS3Region:    *msdpS3RegionFlag,
 		MSDPS3KeyPrefix: *msdpS3KeyPrefixFlag,
 
+		// Multicast pcap warehouse configuration
+		PCAPWarehouseS3Bucket:    *pcapWarehouseS3BucketFlag,
+		PCAPWarehouseS3Region:    *pcapWarehouseS3RegionFlag,
+		PCAPWarehouseS3KeyPrefix: cmp.Or(*pcapWarehouseS3KeyPrefixFlag, *dzEnvFlag),
+
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,
 		ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
@@ -750,6 +771,7 @@ func run() error {
 				MrouteStore:      idx.MrouteStore(),
 				MSDPSource:       idx.MSDPSource(),
 				MSDPStore:        idx.MSDPStore(),
+				PCAPWarehouse:    idx.PCAPWarehouse(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err

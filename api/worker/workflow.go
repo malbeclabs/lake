@@ -246,6 +246,10 @@ const (
 	// guard, which is what keeps those slots from being skipped.
 	edgeScoreboardInterval = 5 * time.Minute
 
+	// edgeHistoryInterval refreshes the Edge History page's whole-history view. The pcap
+	// warehouse is offloaded hourly, so ten minutes is invisible on the page.
+	edgeHistoryInterval = 10 * time.Minute
+
 	// The two DZDP geolocation entries. Both aggregate validator geography —
 	// country, ASN, and nearest DZ metro — which changes only when a validator
 	// moves or DZDP re-hones its anchor point, and weights it by stake, which
@@ -496,6 +500,9 @@ func (a *Activities) entries() []cacheEntry {
 		}},
 		{name: "shreds rewards", key: handlers.ShredsRewardsPageCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
+		}},
+		{name: "edge history", key: handlers.EdgeHistoryPageCacheKey, every: edgeHistoryInterval, fn: func(ctx context.Context) (any, error) {
+			return api.FetchEdgeHistoryData(ctx, "all", time.Now())
 		}},
 		{name: "edge scoreboard", key: "edge_scoreboard", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)

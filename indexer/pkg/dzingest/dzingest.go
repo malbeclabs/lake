@@ -21,6 +21,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/pcapwarehouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
@@ -49,14 +50,15 @@ type Config struct {
 	FeedSubscription *feedsubscription.View // optional
 	PermissionEvents *permissionevents.View // optional
 	TelemLatency     *dztelemlatency.View
-	TelemUsage       *dztelemusage.View // optional
-	GraphStore       *dzgraph.Store     // optional
-	ISISSource       isis.Source        // optional
-	ISISStore        *isis.Store        // optional
-	MrouteSource     mroute.Source      // optional
-	MrouteStore      *mroute.Store      // optional
-	MSDPSource       msdp.Source        // optional
-	MSDPStore        *msdp.Store        // optional
+	TelemUsage       *dztelemusage.View    // optional
+	GraphStore       *dzgraph.Store        // optional
+	ISISSource       isis.Source           // optional
+	ISISStore        *isis.Store           // optional
+	MrouteSource     mroute.Source         // optional
+	MrouteStore      *mroute.Store         // optional
+	MSDPSource       msdp.Source           // optional
+	MSDPStore        *msdp.Store           // optional
+	PCAPWarehouse    *pcapwarehouse.Syncer // optional
 }
 
 // TaskQueue returns the Temporal task queue name for the given network.
@@ -108,6 +110,7 @@ func Start(ctx context.Context, cfg Config) error {
 		MrouteStore:      cfg.MrouteStore,
 		MSDPSource:       cfg.MSDPSource,
 		MSDPStore:        cfg.MSDPStore,
+		PCAPWarehouse:    cfg.PCAPWarehouse,
 	}
 
 	w := worker.New(tc, tq, worker.Options{})

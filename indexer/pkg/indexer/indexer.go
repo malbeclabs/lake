@@ -12,6 +12,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/pcapwarehouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
@@ -46,6 +47,7 @@ type Indexer struct {
 	mrouteStore      *mroute.Store
 	msdpSource       msdp.Source
 	msdpStore        *msdp.Store
+	pcapWarehouse    *pcapwarehouse.Syncer
 	validatorsApp    *validatorsapp.View
 }
 
@@ -350,6 +352,39 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"key_prefix", cfg.MSDPS3KeyPrefix)
 	}
 
+	// Initialize the pcap warehouse syncer if a bucket is configured
+	var pcapWarehouse *pcapwarehouse.Syncer
+	if cfg.PCAPWarehouseS3Bucket != "" {
+		bucket, err := pcapwarehouse.NewS3Warehouse(ctx, pcapwarehouse.S3WarehouseConfig{
+			Bucket:      cfg.PCAPWarehouseS3Bucket,
+			Region:      cfg.PCAPWarehouseS3Region,
+			KeyPrefix:   cfg.PCAPWarehouseS3KeyPrefix,
+			EndpointURL: cfg.PCAPWarehouseS3EndpointURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create pcap warehouse reader: %w", err)
+		}
+		store, err := pcapwarehouse.NewStore(pcapwarehouse.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create pcap warehouse store: %w", err)
+		}
+		pcapWarehouse, err = pcapwarehouse.NewSyncer(pcapwarehouse.SyncerConfig{
+			Logger: cfg.Logger,
+			Bucket: bucket,
+			Store:  store,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create pcap warehouse syncer: %w", err)
+		}
+		cfg.Logger.Info("pcap warehouse sync initialized",
+			"bucket", cfg.PCAPWarehouseS3Bucket,
+			"region", cfg.PCAPWarehouseS3Region,
+			"key_prefix", cfg.PCAPWarehouseS3KeyPrefix)
+	}
+
 	// Initialize validators.app view (optional)
 	var validatorsAppView *validatorsapp.View
 	if cfg.ValidatorsAppClient != nil {
@@ -386,6 +421,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		mrouteStore:      mrouteStore,
 		msdpSource:       msdpSource,
 		msdpStore:        msdpStore,
+		pcapWarehouse:    pcapWarehouse,
 		validatorsApp:    validatorsAppView,
 	}
 
@@ -491,6 +527,11 @@ func (i *Indexer) MSDPSource() msdp.Source {
 // MSDPStore returns the MSDP ClickHouse store, or nil if not configured.
 func (i *Indexer) MSDPStore() *msdp.Store {
 	return i.msdpStore
+}
+
+// PCAPWarehouse returns the pcap warehouse syncer, or nil if not configured.
+func (i *Indexer) PCAPWarehouse() *pcapwarehouse.Syncer {
+	return i.pcapWarehouse
 }
 
 // Geolocation returns the geolocation view, or nil if not configured.

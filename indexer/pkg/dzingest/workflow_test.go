@@ -1,14 +1,20 @@
 package dzingest
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/malbeclabs/lake/indexer/pkg/dz/pcapwarehouse"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
+	temporalworkflow "go.temporal.io/sdk/workflow"
 )
 
 // levelCapture records the messages logged at each level by the workflow's
@@ -73,6 +79,7 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		"mroute sync failed",
 		"msdp sync failed",
 		"graph sync failed",
+		"pcap warehouse sync failed",
 		"telemetry usage refresh failed",
 		"permission events refresh failed",
 	}
@@ -96,6 +103,7 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		a.SyncIPMroute,
 		a.SyncMSDP,
 		a.SyncGraph,
+		a.SyncPCAPWarehouse,
 		a.RefreshTelemetryUsage,
 		a.RefreshPermissionEvents,
 	} {
@@ -143,4 +151,89 @@ func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) 
 	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
 		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), or cancellation lands mid-Flux and the insert never runs",
 		telemUsageStartToCloseTimeout, fluxBudget)
+}
+
+// The warehouse pass checks its budget only between hours, so the budget must leave room
+// under the activity deadline for the hour in flight when it runs out, and a pass must be
+// able to resolve before the loop's drain at continue-as-new.
+func TestLake_DZIngest_PCAPWarehouseBudgetFitsItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	require.Less(t, pcapwarehouse.DefaultBudget+time.Minute, pcapWarehouseStartToClose,
+		"a pass that exhausts its budget (%s) mid-hour must still finish inside the %s deadline",
+		pcapwarehouse.DefaultBudget, pcapWarehouseStartToClose)
+	require.GreaterOrEqual(t, time.Duration(pcapWarehouseStartLead)*refreshInterval, pcapWarehouseStartToClose,
+		"no pass may start close enough to continue-as-new that the drain waits on it")
+}
+
+// A warehouse pass that outlasts the loop interval — a backfill filling its budget —
+// must not hold the loop, must never overlap the next pass, and must have resolved by
+// the continue-as-new boundary rather than be cut there.
+func TestDZIngestWorkflow_SlowPCAPWarehousePassDoesNotHoldTheLoop(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	a := &Activities{}
+	env.RegisterActivity(a)
+	passLength := 150 * time.Second // two and a half loop intervals
+	env.OnActivity(a.SyncPCAPWarehouse, mock.Anything).After(passLength).Return(nil)
+	for _, fn := range []any{
+		a.RefreshServiceability,
+		a.RefreshTelemetryLatency,
+		a.RefreshGeolocation,
+		a.RefreshShreds,
+		a.RefreshShredEscrowEvents,
+		a.SyncISIS,
+		a.SyncIPMroute,
+		a.SyncMSDP,
+		a.SyncGraph,
+		a.RefreshTelemetryUsage,
+		a.RefreshPermissionEvents,
+	} {
+		env.OnActivity(fn, mock.Anything).Return(nil)
+	}
+
+	var (
+		mu                                sync.Mutex
+		inFlight, maxInFlight             int
+		passesStarted, passesDone, cycles int
+		cycleStarts                       []time.Time
+	)
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch info.ActivityType.Name {
+		case "SyncPCAPWarehouse":
+			passesStarted++
+			inFlight++
+			maxInFlight = max(maxInFlight, inFlight)
+		case "RefreshServiceability":
+			cycles++
+			cycleStarts = append(cycleStarts, env.Now())
+		}
+	})
+	env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if info.ActivityType.Name == "SyncPCAPWarehouse" {
+			passesDone++
+			inFlight--
+		}
+	})
+
+	env.ExecuteWorkflow(DZIngestWorkflow, 0)
+
+	require.True(t, env.IsWorkflowCompleted())
+	var can *temporalworkflow.ContinueAsNewError
+	require.ErrorAs(t, env.GetWorkflowError(), &can, "the run ends in continue-as-new, not a failure")
+	require.Equal(t, continueAsNewThreshold, cycles)
+	for i := 1; i < len(cycleStarts); i++ {
+		require.Equal(t, refreshInterval, cycleStarts[i].Sub(cycleStarts[i-1]),
+			"iteration %d waited on the warehouse pass instead of keeping the %s cadence", i, refreshInterval)
+	}
+	require.Equal(t, 1, maxInFlight, "never two passes at once")
+	require.Equal(t, passesStarted, passesDone, "every pass resolved before continue-as-new")
+	// A 150s pass against a 60s loop: a new pass can start every third iteration, and
+	// none within pcapWarehouseStartLead of the boundary.
+	require.Equal(t, (continueAsNewThreshold-pcapWarehouseStartLead+2)/3, passesStarted)
 }

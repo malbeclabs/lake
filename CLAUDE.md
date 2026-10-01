@@ -280,6 +280,71 @@ The 24-hour percentiles merge the stored `signed_lead_ms_state` t-digests. Never
 per-window `signed_lead_p*_ms` columns into a longer span: that weights a quiet 15 minutes the same
 as a busy one, and is not a percentile of anything.
 
+## Edge History (pcap warehouse)
+
+`/dz/edge/history` (internal) reports what the multicast pcap warehouse holds per feed and
+recorder: since when, how much, and where the capture has holes. The bucket is
+`s3://malbeclabs-multicast-pcap-warehouse/<network>/<host>-<public IP>/YYYY/MM/DD/HH/`, and each
+offload writes a `manifest_<ts>.yaml` beside its pcaps carrying, per file, the group, size, md5,
+packet count and **first/last packet time**. The indexer (`indexer/pkg/dz/pcapwarehouse`, activity
+`SyncPCAPWarehouse` in dzingest) reads only manifests, one row per file into
+`fact_dz_edge_pcap_file`. It is off unless `PCAP_WAREHOUSE_S3_BUCKET` is set on the indexer, whose
+AWS identity then needs `s3:ListBucket` and `s3:GetObject` on that bucket.
+
+The dzingest loop does **not** wait on the pass: it runs across iterations (`Future.IsReady`, the
+page cache's heavy-refresh pattern), a new one starts only once the last resolved, and none starts
+within `pcapWarehouseStartLead` iterations of continue-as-new so the drain there never blocks.
+Holding the loop for it would slow every other dataset for as long as a backfill runs. Each pass
+is bounded by `DefaultBudget` (3m, under the 5m StartToClose) and resumes from each recorder's
+newest ingested hour minus `DefaultRescan`; the first run backfills the whole bucket over a few
+hours. Every pass reads at least one hour past the cursor before it checks the budget, or a rescan
+that uses up the budget would never advance. The key prefix defaults to the `--dz-env` name, so a
+testnet indexer never reads mainnet captures into `lake_testnet` — both networks allocate groups
+from the same /24.
+
+The default ("all") view is page-cached under `edge_history:all` (10 min, mainnet only): it is the
+one range that resolves every file ever indexed.
+
+**Packet times must fall inside the file's hour directory** (±5 min), or the manifest is refused:
+the recorder rotates files at the hour, and across 1.2M files every range did. A bad clock cannot
+be repaired later — the row is never re-read — and one far-future last packet would hide every
+later gap behind the gap query's running max. Refusals WARN once each and escalate on
+`SyncPCAPWarehouse:manifests-refused` when they continue across passes (a `manifest_version` bump).
+
+**The bucket archives.** Its lifecycle rule moves every object over 128 KB to GLACIER after 90
+days. Manifests are read hours after they are written, so steady state never meets this; the
+backfill does, on the large catch-up manifests written after an outage (a few hundred, mostly fra
+and was in Feb–Mar). An archived read is not a failure: the key goes into
+`dz_edge_pcap_archived_manifest` (state `archived`), every pass retries it, and it is indexed once
+restored. The page counts those hours per recorder as unread rather than lost. The indexer's role
+is read-only, so restoring is an operator step — bulk retrieval from Glacier Flexible Retrieval is
+free and takes 5–12h:
+
+```bash
+# run by an operator with write access to the bucket
+clickhouse-client -q "SELECT manifest_key FROM dz_edge_pcap_archived_manifest FINAL WHERE state = 'archived'" |
+  while read -r key; do
+    aws s3api restore-object --bucket malbeclabs-multicast-pcap-warehouse --key "$key" \
+      --restore-request '{"Days":7,"GlacierJobParameters":{"Tier":"Bulk"}}'
+  done
+```
+
+The pcaps of those months are archived too, whether or not their manifest was: anything reading
+the captures themselves from before the last 90 days has to restore them first.
+
+**Read `dz_edge_pcap_file_current`, not the fact table.** A recorder that restarts resets its file
+counter, so its next `capture_<group>_000001.pcap` **overwrites** the object an earlier offload
+uploaded in the same hour. Both manifests are kept (the key includes `manifest_key`), the view
+resolves each `s3_key` to its newest offload, and `versions - 1` counts captures the bucket no
+longer holds. Summing the fact table double-counts those. Filter the view on `hour_ts`, a
+grouping key, so the predicate reaches the partitions.
+
+A gap is `edgeHistoryMinGap` (60s) or more between the latest last packet so far and the next
+file's first packet, per feed at a recorder **host** — a rebuild on a new address is one history
+with the rebuild as its gap. Measured across every recorder: consecutive files of a healthy capture
+abut to the microsecond on busy feeds and stay under ten seconds apart on the quietest, while
+restarts land around a minute, so no per-feed threshold is needed.
+
 ## Multicast Member Classification
 
 Which multicast subscribers are DoubleZero's own recorders is settled in **four tiers**, and only
@@ -1005,7 +1070,7 @@ a `gapped` badge.
 
 `web/src/components/sidebar.tsx`. The Edge section holds venues only, **alphabetical** (Hyperliquid,
 Kalshi, Phoenix, Shreds). Insert a new venue in order, not at the end. Cross-venue views are not
-venues and go elsewhere: Edge Multicast sits under Ops.
+venues and go elsewhere: Edge Multicast and Edge History sit under Ops.
 
 Every venue is a **parent item with sub-items**, even when it has only one page:
 
