@@ -305,11 +305,25 @@ from the same /24.
 The default ("all") view is page-cached under `edge_history:all` (10 min, mainnet only): it is the
 one range that resolves every file ever indexed.
 
-**Packet times must fall inside the file's hour directory** (±5 min), or the manifest is refused:
-the recorder rotates files at the hour, and across 1.2M files every range did. A bad clock cannot
+**Packet times must fall inside the file's hour directory** (±5 min): the recorder rotates files
+at the hour, and across 1.2M files read before the rule existed every range did. A bad clock cannot
 be repaired later — the row is never re-read — and one far-future last packet would hide every
-later gap behind the gap query's running max. Refusals WARN once each and escalate on
-`SyncPCAPWarehouse:manifests-refused` when they continue across passes (a `manifest_version` bump).
+later gap behind the gap query's running max.
+
+**A bad file entry rejects that file, never the manifest.** aws-tyo-mn-recorder1 writes the odd
+impossible timestamp (`last_packet_utc: 1983-03-16` on a file of 324,805 packets, mid-September
+2026 onwards); refusing the whole manifest for it dropped ~138 good files each time and painted
+the hour as an outage. Rejected files are counted (`files_rejected`) and WARN once per manifest;
+they never escalate — the rest is ingested, and the recorder's defect is not on-call's. Only a
+manifest refused whole (unreadable YAML, unknown `manifest_version`) escalates, on
+`SyncPCAPWarehouse:manifests-refused`, when refusals continue across passes: the shape of a format
+change that stops ingest everywhere.
+
+**`PCAP_WAREHOUSE_REPAIR_SINCE`** (`YYYY-MM-DD`) re-lists each recorder from that date once per
+process and reads any manifest no row came from, within the pass budget, resuming across passes.
+It exists to recover what a build dropped behind the cursor, which the normal rescan never revisits
+— 2026-09-14 recovers the tyo manifests the whole-manifest refusal dropped. Each process repairs
+once, so leaving it set costs one re-list per restart; unset it when convenient.
 
 **The bucket archives.** Its lifecycle rule moves every object over 128 KB to GLACIER after 90
 days. Manifests are read hours after they are written, so steady state never meets this; the

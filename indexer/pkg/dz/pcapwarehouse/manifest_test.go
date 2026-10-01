@@ -46,8 +46,9 @@ func TestParseManifest(t *testing.T) {
 	hour := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	key := "mainnet-beta/aws-cmh-mn-recorder1-3.151.138.124/2026/09/30/10/manifest_20260930T100025Z.yaml"
 
-	rows, err := ParseManifest([]byte(sampleManifest), rec, hour, key)
+	rows, rejected, err := ParseManifest([]byte(sampleManifest), rec, hour, key)
 	require.NoError(t, err)
+	require.Empty(t, rejected)
 	require.Len(t, rows, 2)
 
 	r := rows[0]
@@ -72,11 +73,11 @@ func TestParseManifest(t *testing.T) {
 
 func TestParseManifest_RejectsUnknownVersion(t *testing.T) {
 	rec, _ := ParseRecorder("chi-mn-recorder1-208.78.39.181")
-	_, err := ParseManifest([]byte("manifest_version: 2\nfiles: []\n"), rec, time.Now(), "k")
+	_, _, err := ParseManifest([]byte("manifest_version: 2\nfiles: []\n"), rec, time.Now(), "k")
 	require.EqualError(t, err, "manifest k: unsupported manifest_version 2")
 }
 
-func TestParseManifest_RejectsCapturedFileWithoutAPacketRange(t *testing.T) {
+func TestParseManifest_RejectsFileWithoutAPacketRange(t *testing.T) {
 	rec, _ := ParseRecorder("chi-mn-recorder1-208.78.39.181")
 	hour := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	const prefix = "manifest k: file capture_233.84.178.15_000001.pcap captured 10 packets with an invalid packet range "
@@ -90,9 +91,11 @@ func TestParseManifest_RejectsCapturedFileWithoutAPacketRange(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := "manifest_version: 1\nfiles:\n    - filename: capture_233.84.178.15_000001.pcap\n      packets_captured: 10\n      multicast_group: 233.84.178.15\n      " + c.times + "\n"
-			rows, err := ParseManifest([]byte(data), rec, hour, "k")
-			require.Nil(t, rows)
-			require.EqualError(t, err, c.want)
+			rows, rejected, err := ParseManifest([]byte(data), rec, hour, "k")
+			require.NoError(t, err, "a bad file entry rejects the file, not the manifest")
+			require.Empty(t, rows)
+			require.Len(t, rejected, 1)
+			require.EqualError(t, rejected[0], c.want)
 		})
 	}
 }
@@ -115,7 +118,7 @@ func TestParseRecorder(t *testing.T) {
 }
 
 // Every file's packets fall inside the hour directory it was filed under (checked on
-// the real bucket), so a range outside it is a bad clock and the manifest is refused.
+// the real bucket), so a range outside it is a bad clock and the file is rejected.
 func TestParseManifest_RejectsPacketsOutsideTheirHour(t *testing.T) {
 	rec, _ := ParseRecorder("chi-mn-recorder1-208.78.39.181")
 	hour := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
@@ -133,14 +136,45 @@ func TestParseManifest_RejectsPacketsOutsideTheirHour(t *testing.T) {
 			"manifest k: file f.pcap packet range 2026-09-30T11:10:00Z to 2026-09-30T11:20:00Z lies outside its hour directory 2026/09/30/10"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rows, err := ParseManifest([]byte(file(c.first, c.last)), rec, hour, "k")
-			require.Nil(t, rows)
-			require.EqualError(t, err, c.want)
+			rows, rejected, err := ParseManifest([]byte(file(c.first, c.last)), rec, hour, "k")
+			require.NoError(t, err)
+			require.Empty(t, rows)
+			require.Len(t, rejected, 1)
+			require.EqualError(t, rejected[0], c.want)
 		})
 	}
 
 	// A few minutes of skew at the edges is tolerated.
-	rows, err := ParseManifest([]byte(file("2026-09-30T09:58:00Z", "2026-09-30T11:03:00Z")), rec, hour, "k")
+	rows, rejected, err := ParseManifest([]byte(file("2026-09-30T09:58:00Z", "2026-09-30T11:03:00Z")), rec, hour, "k")
+	require.NoError(t, err)
+	require.Empty(t, rejected)
+	require.Len(t, rows, 1)
+}
+
+// The case seen on aws-tyo-mn-recorder1: one file entry with an impossible last
+// packet among good ones. Only that file is rejected; the rest of the manifest stays.
+func TestParseManifest_OneBadFileKeepsTheRest(t *testing.T) {
+	rec, _ := ParseRecorder("aws-tyo-mn-recorder1-13.114.28.108")
+	hour := time.Date(2026, 9, 15, 15, 0, 0, 0, time.UTC)
+	data := `manifest_version: 1
+offload:
+    timestamp_utc: "2026-09-15T18:25:54Z"
+files:
+    - filename: capture_233.84.178.23_000052.pcap
+      packets_captured: 324805
+      first_packet_utc: "2026-09-15T15:33:11.449085Z"
+      last_packet_utc: "1983-03-16T07:25:38.216201704Z"
+      multicast_group: 233.84.178.23
+    - filename: capture_233.84.178.23_000053.pcap
+      packets_captured: 310000
+      first_packet_utc: "2026-09-15T15:34:00Z"
+      last_packet_utc: "2026-09-15T15:35:00Z"
+      multicast_group: 233.84.178.23
+`
+	rows, rejected, err := ParseManifest([]byte(data), rec, hour, "k")
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+	require.Equal(t, "233.84.178.23", rows[0].MulticastGroup)
+	require.Len(t, rejected, 1)
+	require.EqualError(t, rejected[0], `manifest k: file capture_233.84.178.23_000052.pcap captured 324805 packets with an invalid packet range ("2026-09-15T15:33:11.449085Z" to "1983-03-16T07:25:38.216201704Z")`)
 }

@@ -308,3 +308,93 @@ func TestSync_ArchivedManifestIsRecordedAndIndexedOnceRestored(t *testing.T) {
 	require.Equal(t, archivedStateIndexed, st.states[archivedKey])
 	require.Len(t, st.rows, 3)
 }
+
+// A bad file entry costs that file, not the manifest: the others are written, the
+// rejection is counted apart from refused manifests, and nothing escalates on it.
+func TestSync_BadFileEntryRejectsOnlyThatFile(t *testing.T) {
+	src := newFakeWarehouse()
+	h := hourAt(7, 15)
+	key := src.put(recA, h, "m", "233.84.178.23", h)
+	src.objects[key] = []byte(`manifest_version: 1
+files:
+    - filename: bad.pcap
+      packets_captured: 10
+      first_packet_utc: "2026-09-07T15:10:00Z"
+      last_packet_utc: "1983-03-16T07:25:38Z"
+      multicast_group: 233.84.178.23
+    - filename: good.pcap
+      packets_captured: 10
+      first_packet_utc: "2026-09-07T15:11:00Z"
+      last_packet_utc: "2026-09-07T15:12:00Z"
+      multicast_group: 233.84.178.23
+`)
+	st := &memStore{}
+	s := newTestSyncer(t, src, st, time.Now, time.Minute)
+
+	res, err := s.Sync(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.FilesRejected)
+	require.Zero(t, res.ManifestsSkipped)
+	require.Equal(t, 1, res.FilesWritten)
+	require.True(t, strings.HasSuffix(st.rows[0].S3Key, "/good.pcap"))
+}
+
+// dropRows removes a manifest's rows, as if an earlier build had refused it.
+func (m *memStore) dropRows(manifestKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rows = slices.DeleteFunc(m.rows, func(r FileRow) bool { return r.ManifestKey == manifestKey })
+}
+
+// A manifest dropped behind the cursor is out of the normal rescan's reach; a repair
+// reaches it, within the pass budget, resuming across passes, and once per process.
+func TestSync_RepairRecoversManifestsBehindTheCursor(t *testing.T) {
+	src := newFakeWarehouse()
+	var dropped string
+	for h := range 12 {
+		k := src.put(recA, hourAt(8, h), fmt.Sprintf("a%02d", h), "233.84.178.15", hourAt(8, h))
+		if h == 2 {
+			dropped = k
+		}
+	}
+	st := &memStore{}
+	_, err := newTestSyncer(t, src, st, time.Now, time.Minute).Sync(t.Context())
+	require.NoError(t, err)
+	require.Len(t, st.rows, 12)
+	st.dropRows(dropped)
+
+	// The normal rescan (3h behind the hour-11 cursor) does not look at hour 2.
+	res, err := newTestSyncer(t, src, st, time.Now, time.Minute).Sync(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, res.FilesWritten)
+
+	// A repair from hour 0, on a clock that spends the 90s budget after one hour: it
+	// resumes pass after pass until the dropped hour is read and the walk is done.
+	var tick time.Time
+	var tmu sync.Mutex
+	now := func() time.Time {
+		tmu.Lock()
+		defer tmu.Unlock()
+		tick = tick.Add(time.Minute)
+		return tick
+	}
+	s, err := NewSyncer(SyncerConfig{Logger: laketesting.NewLogger(), Bucket: src, Store: st, Now: now,
+		Budget: 90 * time.Second, RepairSince: hourAt(8, 0)})
+	require.NoError(t, err)
+	res, err = s.Sync(t.Context())
+	require.NoError(t, err)
+	require.True(t, res.Behind, "the first repair pass stops at the budget")
+	require.True(t, src.listSince[recA].Equal(hourAt(8, 0)))
+	for range 20 {
+		if _, err := s.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	require.Len(t, st.rows, 12, "the dropped manifest is back, and nothing was written twice")
+	require.True(t, s.repaired[recA])
+
+	// Once repaired, passes list from the rescan window again.
+	_, err = s.Sync(t.Context())
+	require.NoError(t, err)
+	require.True(t, src.listSince[recA].Equal(hourAt(8, 11).Add(-DefaultRescan)))
+}

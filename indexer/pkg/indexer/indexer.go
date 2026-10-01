@@ -372,9 +372,10 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			return nil, fmt.Errorf("failed to create pcap warehouse store: %w", err)
 		}
 		pcapWarehouse, err = pcapwarehouse.NewSyncer(pcapwarehouse.SyncerConfig{
-			Logger: cfg.Logger,
-			Bucket: bucket,
-			Store:  store,
+			Logger:      cfg.Logger,
+			Bucket:      bucket,
+			Store:       store,
+			RepairSince: cfg.PCAPWarehouseRepairSince,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create pcap warehouse syncer: %w", err)
@@ -382,7 +383,8 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		cfg.Logger.Info("pcap warehouse sync initialized",
 			"bucket", cfg.PCAPWarehouseS3Bucket,
 			"region", cfg.PCAPWarehouseS3Region,
-			"key_prefix", cfg.PCAPWarehouseS3KeyPrefix)
+			"key_prefix", cfg.PCAPWarehouseS3KeyPrefix,
+			"repair_since", cfg.PCAPWarehouseRepairSince)
 	}
 
 	// Initialize validators.app view (optional)

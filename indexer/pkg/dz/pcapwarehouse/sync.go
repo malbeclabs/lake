@@ -66,6 +66,16 @@ type SyncerConfig struct {
 	Budget time.Duration // zero means DefaultBudget
 	Rescan time.Duration // zero means DefaultRescan
 	Now    func() time.Time
+
+	// RepairSince, when set, makes each recorder's first passes in this process re-list
+	// every hour from this time — not just the rescan window behind its cursor — and
+	// read any manifest no row came from. It recovers what an earlier build dropped
+	// behind the cursor, where the normal rescan never looks again: the build that
+	// refused a whole manifest for one bad file entry lost every good file beside it.
+	// The re-listing is bounded by the pass budget like the backfill and resumes on the
+	// next pass; once it reaches the rescan window the recorder carries on as normal.
+	// Each process repairs once, so the setting is harmless to leave until convenient.
+	RepairSince time.Time
 }
 
 type Syncer struct {
@@ -80,6 +90,12 @@ type Syncer struct {
 	// forgets them, which costs one more read each.
 	barrenMu sync.Mutex
 	barren   map[string]map[string]time.Time // recorder prefix -> manifest key -> hour
+
+	// repairFrom is where each recorder's repair resumes; repaired holds the recorders
+	// whose repair has reached the rescan window. Both empty when RepairSince is unset.
+	repairMu   sync.Mutex
+	repairFrom map[string]time.Time
+	repaired   map[string]bool
 }
 
 func NewSyncer(cfg SyncerConfig) (*Syncer, error) {
@@ -95,7 +111,12 @@ func NewSyncer(cfg SyncerConfig) (*Syncer, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Syncer{cfg: cfg, barren: map[string]map[string]time.Time{}}, nil
+	return &Syncer{
+		cfg:        cfg,
+		barren:     map[string]map[string]time.Time{},
+		repairFrom: map[string]time.Time{},
+		repaired:   map[string]bool{},
+	}, nil
 }
 
 // SyncResult reports what one Sync did.
@@ -103,8 +124,11 @@ type SyncResult struct {
 	Recorders        int
 	Hours            int
 	ManifestsRead    int
-	ManifestsSkipped int // refused manifests (malformed or bad clock), logged and left out
-	FilesWritten     int
+	ManifestsSkipped int // manifests refused whole (unreadable, unknown version), logged and left out
+	// FilesRejected counts file entries dropped from otherwise good manifests — an
+	// invalid or out-of-hour packet range. A recorder defect, logged, never escalated.
+	FilesRejected int
+	FilesWritten  int
 	// ManifestsArchived counts manifests newly found archived this pass; they are
 	// recorded and retried on later passes, not skipped. ArchivedPending is how many
 	// earlier ones were still archived when retried, and ArchivedIndexed how many had
@@ -126,6 +150,7 @@ func (r *SyncResult) add(o recorderResult) {
 	r.Hours += o.hours
 	r.ManifestsRead += o.manifestsRead
 	r.ManifestsSkipped += o.manifestsSkipped
+	r.FilesRejected += o.filesRejected
 	r.FilesWritten += o.filesWritten
 	r.ManifestsArchived += o.manifestsArchived
 	r.Behind = r.Behind || o.behind
@@ -139,7 +164,7 @@ func (r *SyncResult) add(o recorderResult) {
 
 type recorderResult struct {
 	hours, manifestsRead, manifestsSkipped, filesWritten int
-	manifestsArchived                                    int
+	manifestsArchived, filesRejected                     int
 	behind                                               bool
 	minHour, maxHour                                     time.Time
 }
@@ -197,9 +222,21 @@ func (s *Syncer) Sync(ctx context.Context) (*SyncResult, error) {
 func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Time, hasCursor bool, deadline time.Time) (recorderResult, error) {
 	var rr recorderResult
 	var since time.Time
-	ingested := map[string]struct{}{}
 	if hasCursor {
 		since = cursor.Add(-s.cfg.Rescan)
+	}
+	normalSince := since
+	repairing := false
+	if from, ok := s.repairStart(rec.Prefix, hasCursor); ok {
+		if from.Before(since) {
+			since, repairing = from, true
+		} else {
+			// Nothing behind the rescan window left to repair.
+			s.finishRepair(rec.Prefix)
+		}
+	}
+	ingested := map[string]struct{}{}
+	if hasCursor {
 		var err error
 		if ingested, err = s.cfg.Store.IngestedManifests(ctx, rec, since); err != nil {
 			return rr, err
@@ -237,10 +274,16 @@ func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Tim
 	// Every pass reads at least one hour past the cursor before it checks the budget.
 	// Counting the rescan hours toward that would let a pass whose budget the rescan
 	// uses up re-read the same window forever and never advance.
+	// A repair is bounded by the budget too, after at least one hour, so a pass that
+	// re-lists weeks of history hands the loop back and resumes where it stopped.
 	advanced := false
+	processed := 0
+	var lastHour time.Time
+	completed := true
 	for _, hour := range hours {
-		if advanced && s.cfg.Now().After(deadline) {
+		if s.cfg.Now().After(deadline) && (advanced || (repairing && processed > 0)) {
 			rr.behind = true
+			completed = false
 			break
 		}
 		hr, err := s.readHour(ctx, rec, hour, ingested)
@@ -249,8 +292,11 @@ func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Tim
 			return rr, errors.Join(err, flush())
 		}
 		rr.hours++
+		processed++
+		lastHour = hour
 		rr.manifestsRead += hr.read
 		rr.manifestsSkipped += hr.skipped
+		rr.filesRejected += hr.rejected
 		archived = append(archived, hr.archived...)
 		rows := hr.rows
 		if rr.minHour.IsZero() {
@@ -265,7 +311,64 @@ func (s *Syncer) syncRecorder(ctx context.Context, rec Recorder, cursor time.Tim
 			}
 		}
 	}
-	return rr, flush()
+	if err := flush(); err != nil {
+		return rr, err
+	}
+	if repairing {
+		// Resume after the last hour written, or stop repairing once the walk has
+		// reached the hours the normal rescan covers anyway.
+		if completed || !lastHour.Before(normalSince) {
+			s.finishRepair(rec.Prefix)
+		} else if processed > 0 {
+			s.setRepair(rec.Prefix, lastHour.Add(time.Hour))
+		}
+	}
+	return rr, nil
+}
+
+// repairStart reports where a recorder's repair should list from, if it has one
+// outstanding. A recorder with no cursor is read from its first hour anyway, so it
+// has nothing to repair.
+func (s *Syncer) repairStart(recorder string, hasCursor bool) (time.Time, bool) {
+	if s.cfg.RepairSince.IsZero() {
+		return time.Time{}, false
+	}
+	s.repairMu.Lock()
+	defer s.repairMu.Unlock()
+	if s.repaired[recorder] {
+		return time.Time{}, false
+	}
+	if !hasCursor {
+		s.repaired[recorder] = true
+		return time.Time{}, false
+	}
+	from, ok := s.repairFrom[recorder]
+	if !ok {
+		from = s.cfg.RepairSince.UTC().Truncate(time.Hour)
+		s.repairFrom[recorder] = from
+	}
+	return from, true
+}
+
+func (s *Syncer) setRepair(recorder string, from time.Time) {
+	s.repairMu.Lock()
+	defer s.repairMu.Unlock()
+	s.repairFrom[recorder] = from
+}
+
+func (s *Syncer) finishRepair(recorder string) {
+	s.repairMu.Lock()
+	defer s.repairMu.Unlock()
+	delete(s.repairFrom, recorder)
+	s.repaired[recorder] = true
+	s.cfg.Logger.Info("pcapwarehouse: repair reached the rescan window", "recorder", recorder)
+}
+
+// warnRejected logs a manifest's rejected file entries as one line: a recorder with a
+// bad clock writes many per manifest, and the first error names the shape.
+func (s *Syncer) warnRejected(key string, rejected []error) {
+	s.cfg.Logger.Warn("pcapwarehouse: rejected file entries in manifest",
+		"key", key, "rejected", len(rejected), "first", rejected[0].Error())
 }
 
 func (s *Syncer) markBarren(recorder, key string, hour time.Time) {
@@ -290,9 +393,9 @@ func (s *Syncer) pruneBarren(recorder string, since time.Time) {
 }
 
 type hourResult struct {
-	rows          []FileRow
-	read, skipped int
-	archived      []ArchivedManifest
+	rows                    []FileRow
+	read, skipped, rejected int
+	archived                []ArchivedManifest
 }
 
 func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ingested map[string]struct{}) (hourResult, error) {
@@ -338,7 +441,13 @@ func (s *Syncer) readHour(ctx context.Context, rec Recorder, hour time.Time, ing
 			if err != nil {
 				return err
 			}
-			rows, err := ParseManifest(data, rec, hour, key)
+			rows, rejected, err := ParseManifest(data, rec, hour, key)
+			if len(rejected) > 0 {
+				s.warnRejected(key, rejected)
+				mu.Lock()
+				hr.rejected += len(rejected)
+				mu.Unlock()
+			}
 			if err != nil {
 				// A malformed manifest is the recorder's defect, not a reason to stop
 				// ingesting everything behind it. It is logged once and remembered as
@@ -406,7 +515,11 @@ func (s *Syncer) retryArchived(ctx context.Context, res *SyncResult, deadline ti
 			case err != nil:
 				return err
 			default:
-				parsed, perr := ParseManifest(data, m.Recorder, m.Hour, m.Key)
+				parsed, rejected, perr := ParseManifest(data, m.Recorder, m.Hour, m.Key)
+				if len(rejected) > 0 {
+					s.warnRejected(m.Key, rejected)
+					res.FilesRejected += len(rejected)
+				}
 				if perr != nil {
 					s.cfg.Logger.Warn("pcapwarehouse: skipping unreadable manifest", "key", m.Key, "error", perr)
 					res.ManifestsSkipped++
