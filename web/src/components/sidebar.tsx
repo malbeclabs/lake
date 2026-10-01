@@ -70,7 +70,7 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
-  // from paying ones, so it stays with the other internal edge views.
+  // from paying ones. It is a feed-health monitor, not a venue, so it sits under Ops.
   const showEdgeMulticast = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
   // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
@@ -144,8 +144,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
   const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
   const isEdgeHistoryRoute = location.pathname === '/dz/edge/history'
-  const isEdgeRoute =
-    isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute || isEdgeMulticastRoute || isEdgeHistoryRoute
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -290,7 +289,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
             <Gauge className="h-4 w-4" />
           </Link>
-          <Link to="/ops/incidents/links" className={collapsedIconClass(isOpsRoute)} title="Ops">
+          <Link to="/ops/incidents/links" className={collapsedIconClass(isOpsRoute || isEdgeMulticastRoute || isEdgeHistoryRoute)} title="Ops">
             <ShieldAlert className="h-4 w-4" />
           </Link>
           <button
@@ -326,7 +325,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to={shredsDefaultPath} className={collapsedIconClass(isEdgeRoute)} title="Edge">
             <Trophy className="h-4 w-4" />
           </Link>
-          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
+          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute && !isEdgeMulticastRoute && !isEdgeHistoryRoute)} title="DoubleZero">
             <Server className="h-4 w-4" />
           </Link>
           {showGeoloc && (
@@ -575,12 +574,24 @@ const { resolvedTheme, setTheme } = useTheme()
           </div>
         </div>
 
-        {/* Ops section */}
+        {/* Ops section: alphabetical */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Ops</span>
           </div>
           <div className="space-y-1">
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/history" className={navItemClass(isEdgeHistoryRoute)}>
+                <History className="h-4 w-4" />
+                Edge History
+              </Link>
+            )}
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
+                <Radio className="h-4 w-4" />
+                Edge Multicast
+              </Link>
+            )}
             <Link
               to="/ops/incidents/links"
               className={isOpsIncidentsRoute ? navItemExpandedClass : navItemClass(false)}
@@ -614,22 +625,46 @@ const { resolvedTheme, setTheme } = useTheme()
           </div>
         </div>
 
-        {/* Edge section */}
+        {/* Edge section: venues only, alphabetical, each a parent with sub-items (see CLAUDE.md "Sidebar: Edge Section") */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
           </div>
           <div className="space-y-1">
-            {showEdgeMulticast && (
-              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
-                <Radio className="h-4 w-4" />
-                Multicast
+            <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Activity className="h-4 w-4" />
+              Hyperliquid
+            </Link>
+            {isHyperliquidRoute && (
+              <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
+                Scoreboard
               </Link>
             )}
-            {showEdgeMulticast && (
-              <Link to="/dz/edge/history" className={navItemClass(isEdgeHistoryRoute)}>
-                <History className="h-4 w-4" />
-                History
+            {showKalshi && (
+              <>
+                <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <CandlestickChart className="h-4 w-4" />
+                  Kalshi
+                </Link>
+                {isKalshiRoute && (
+                  <>
+                    <Link to="/dz/kalshi/scoreboard" className={subNavItemClass(isKalshiScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                    <Link to="/dz/kalshi/l2" className={subNavItemClass(isKalshiL2Route)}>
+                      Sports L2
+                    </Link>
+                  </>
+                )}
+              </>
+            )}
+            <Link to="/dz/phoenix/scoreboard" className={isPhoenixRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Flame className="h-4 w-4" />
+              Phoenix
+            </Link>
+            {isPhoenixRoute && (
+              <Link to="/dz/phoenix/scoreboard" className={subNavItemClass(isPhoenixScoreboardRoute)}>
+                Scoreboard
               </Link>
             )}
             <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
@@ -659,32 +694,6 @@ const { resolvedTheme, setTheme } = useTheme()
                 <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
                   Economics
                 </Link>
-              </>
-            )}
-            <Link to="/dz/hyperliquid/scoreboard" className={navItemClass(isHyperliquidScoreboardRoute)}>
-              <Activity className="h-4 w-4" />
-              Hyperliquid
-            </Link>
-            <Link to="/dz/phoenix/scoreboard" className={navItemClass(isPhoenixScoreboardRoute)}>
-              <Flame className="h-4 w-4" />
-              Phoenix
-            </Link>
-            {showKalshi && (
-              <>
-                <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>
-                  <CandlestickChart className="h-4 w-4" />
-                  Kalshi
-                </Link>
-                {isKalshiRoute && (
-                  <>
-                    <Link to="/dz/kalshi/scoreboard" className={subNavItemClass(isKalshiScoreboardRoute)}>
-                      Scoreboard
-                    </Link>
-                    <Link to="/dz/kalshi/l2" className={subNavItemClass(isKalshiL2Route)}>
-                      Sports L2
-                    </Link>
-                  </>
-                )}
               </>
             )}
           </div>
