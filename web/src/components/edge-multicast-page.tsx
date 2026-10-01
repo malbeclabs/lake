@@ -14,6 +14,7 @@ import {
 import { Tooltip } from '@/components/ui/tooltip'
 import { recorderRowDetail, type GapWindow } from '@/lib/edge-multicast-loss'
 import { PageHeader } from './page-header'
+import { DeviceTelemetryPausedNotice } from './device-telemetry-paused-notice'
 import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
 import {
@@ -2272,7 +2273,11 @@ export function EdgeMulticastPage() {
           }
         />
 
-        <div className="space-y-6">
+        <DeviceTelemetryPausedNotice>
+          The BGP state in the DZD column is from before the pause.
+        </DeviceTelemetryPausedNotice>
+
+        <div className="mt-6 space-y-6">
           {(data?.services ?? []).map((s) => (
             <ServiceSection
               key={s.code}

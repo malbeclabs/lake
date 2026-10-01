@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { fetchDeviceOptics, type OpticsLane, type OpticsSeverity } from '@/lib/api'
 import type { TimeRange } from '@/components/topology/utils'
 import { DeviceOpticsChart } from './DeviceOpticsChart'
+import { DeviceTelemetryPausedNotice } from '@/components/device-telemetry-paused-notice'
 
 interface DeviceOpticsPanelProps {
   devicePk: string
@@ -84,7 +85,11 @@ export function DeviceOpticsPanel({ devicePk, timeRange, className }: DeviceOpti
         </div>
       </div>
 
-      <div className="rounded-lg border border-border overflow-hidden">
+      <DeviceTelemetryPausedNotice>
+        These optics values are from before the pause.
+      </DeviceTelemetryPausedNotice>
+
+      <div className="mt-3 rounded-lg border border-border overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-xs text-muted-foreground uppercase tracking-wider">
             <tr>
