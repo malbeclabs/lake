@@ -82,6 +82,13 @@ func (s *Store) ReplaceValidatorClientRewards(ctx context.Context, rows []Valida
 	})
 }
 
+func (s *Store) ReplaceClientClaimHoldings(ctx context.Context, rows []ClientClaimHoldingRow) error {
+	s.log.Debug("shreds/store: replacing client claim holdings", "count", len(rows))
+	return s.writeDimension(ctx, len(rows), NewClientClaimHoldingDataset, func(i int) ([]any, error) {
+		return clientClaimHoldingSchema.ToRow(rows[i]), nil
+	})
+}
+
 func (s *Store) ReplaceShredDistributions(ctx context.Context, rows []ShredDistributionRow) error {
 	s.log.Debug("shreds/store: replacing shred distributions", "count", len(rows))
 	return s.writeDimension(ctx, len(rows), NewShredDistributionDataset, func(i int) ([]any, error) {
