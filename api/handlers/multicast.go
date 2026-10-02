@@ -977,7 +977,11 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
-		logError("multicast group member counts group query error", "error", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			logWarn("multicast group member counts group query error", "error", err)
+		} else {
+			logError("multicast group member counts group query error", "error", err)
+		}
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
@@ -1179,7 +1183,11 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	`
 	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
-		logError("multicast tree paths group query error", "error", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			logWarn("multicast tree paths group query error", "error", err)
+		} else {
+			logError("multicast tree paths group query error", "error", err)
+		}
 		response.Error = "multicast group not found"
 		writeJSON(w, response)
 		return
@@ -1400,7 +1408,11 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	`
 	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
-		logError("multicast tree segments group query error", "error", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			logWarn("multicast tree segments group query error", "error", err)
+		} else {
+			logError("multicast tree segments group query error", "error", err)
+		}
 		response.Error = "multicast group not found"
 		writeJSON(w, response)
 		return
@@ -1610,7 +1622,11 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
-		logError("multicast group shred stats group query error", "error", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			logWarn("multicast group shred stats group query error", "error", err)
+		} else {
+			logError("multicast group shred stats group query error", "error", err)
+		}
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}

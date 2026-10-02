@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -1884,7 +1885,11 @@ func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		logError("error fetching single link history", "error", err)
+		if errors.Is(err, errLinkNotFound) {
+			logWarn("error fetching single link history", "error", err)
+		} else {
+			logError("error fetching single link history", "error", err)
+		}
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
