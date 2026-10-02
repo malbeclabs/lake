@@ -147,6 +147,7 @@ func run() error {
 	// Multicast pcap warehouse configuration
 	pcapWarehouseS3BucketFlag := flag.String("pcap-warehouse-s3-bucket", "", "S3 bucket the edge recorders offload pcaps to; empty disables indexing it (or set PCAP_WAREHOUSE_S3_BUCKET env var)")
 	pcapWarehouseS3RegionFlag := flag.String("pcap-warehouse-s3-region", "us-east-1", "AWS region for the pcap warehouse bucket (or set PCAP_WAREHOUSE_S3_REGION env var)")
+	pcapWarehouseRepairSinceFlag := flag.String("pcap-warehouse-repair-since", "", "Re-list the pcap warehouse from this date (YYYY-MM-DD or RFC 3339) once per process and read any manifest no row came from; empty disables (or set PCAP_WAREHOUSE_REPAIR_SINCE env var)")
 	pcapWarehouseS3KeyPrefixFlag := flag.String("pcap-warehouse-s3-key-prefix", "", "Network directory inside the pcap warehouse bucket; empty means the --dz-env name, so an indexer never reads another network's captures into its database (or set PCAP_WAREHOUSE_S3_KEY_PREFIX env var)")
 
 	// MSDP (state-collect) configuration
@@ -260,6 +261,13 @@ func run() error {
 	}
 	if v := os.Getenv("PCAP_WAREHOUSE_S3_KEY_PREFIX"); v != "" {
 		*pcapWarehouseS3KeyPrefixFlag = v
+	}
+	if v := os.Getenv("PCAP_WAREHOUSE_REPAIR_SINCE"); v != "" {
+		*pcapWarehouseRepairSinceFlag = v
+	}
+	pcapWarehouseRepairSince, err := parseRepairSince(*pcapWarehouseRepairSinceFlag)
+	if err != nil {
+		return err
 	}
 
 	// Override MSDP flags with environment variables if set
@@ -695,6 +703,7 @@ func run() error {
 		PCAPWarehouseS3Bucket:    *pcapWarehouseS3BucketFlag,
 		PCAPWarehouseS3Region:    *pcapWarehouseS3RegionFlag,
 		PCAPWarehouseS3KeyPrefix: cmp.Or(*pcapWarehouseS3KeyPrefixFlag, *dzEnvFlag),
+		PCAPWarehouseRepairSince: pcapWarehouseRepairSince,
 
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,
@@ -1251,4 +1260,19 @@ func initializeGeoIP(cityDBPath, asnDBPath string, log *slog.Logger) (geoip.Reso
 		}
 		return nil
 	}, nil
+}
+
+// parseRepairSince reads --pcap-warehouse-repair-since: a date, or an RFC 3339 time.
+func parseRepairSince(v string) (time.Time, error) {
+	if v == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse("2006-01-02", v); err == nil {
+		return t, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid PCAP_WAREHOUSE_REPAIR_SINCE %q: want YYYY-MM-DD or RFC 3339", v)
+	}
+	return t.UTC(), nil
 }

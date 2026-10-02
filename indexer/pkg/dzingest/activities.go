@@ -312,6 +312,7 @@ func (a *Activities) SyncPCAPWarehouse(ctx context.Context) error {
 			a.Log.Info("pcap_warehouse: sync pass",
 				"recorders", res.Recorders, "hours", res.Hours,
 				"manifests_read", res.ManifestsRead, "manifests_skipped", res.ManifestsSkipped,
+				"files_rejected", res.FilesRejected,
 				"manifests_archived", res.ManifestsArchived, "archived_pending", res.ArchivedPending,
 				"archived_indexed", res.ArchivedIndexed,
 				"files_written", res.FilesWritten, "behind", res.Behind)
@@ -321,7 +322,10 @@ func (a *Activities) SyncPCAPWarehouse(ctx context.Context) error {
 			// fails on consecutive passes only while new manifests keep being refused:
 			// the shape of a manifest_version bump, which would otherwise stop ingest
 			// everywhere with nothing but WARNs, and the page reading the missing hours
-			// as capture outages. Archived manifests are not refusals and never page.
+			// as capture outages. Archived manifests are not refusals and never page, and
+			// neither are file entries rejected from a good manifest (a recorder writing
+			// an impossible timestamp): the rest of the manifest is ingested, so ingest
+			// is not stopping, and the recorder's own defect is not on-call's to fix.
 			const refusedKey = "SyncPCAPWarehouse:manifests-refused"
 			if res.ManifestsSkipped > 0 {
 				a.esc.Fail(a.Log, refusedKey, "pcap warehouse: manifests refused",
