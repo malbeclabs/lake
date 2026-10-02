@@ -844,7 +844,7 @@ func run() error {
 		cfg.fetchesPerSecond = f
 		secondaryEnvs[env] = cfg
 	}
-	if rpcURL := os.Getenv("SOLANA_RPC_URL_TESTNET"); rpcURL != "" {
+	if rpcURL := os.Getenv("SOLANA_RPC_URL_DEVNET"); rpcURL != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.solanaRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
