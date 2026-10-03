@@ -21,7 +21,7 @@ func newBaselineTestView(t *testing.T, influx InfluxDBClient, dzEnv string) *Vie
 	view, err := NewView(ViewConfig{
 		Logger:          laketesting.NewLogger(),
 		Clock:           clockwork.NewFakeClock(),
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,

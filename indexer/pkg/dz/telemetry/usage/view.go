@@ -447,6 +447,13 @@ type View struct {
 	lastWindowEnd    time.Time
 	sameWindowCycles int
 
+	// linkLookupCache is the last link lookup that built successfully, and
+	// linkLookupCachedAt when. A failed lookup falls back to it rather than
+	// writing a batch with every link_pk empty, which reads downstream as every
+	// link going silent at once. Guarded by refreshMu.
+	linkLookupCache    map[string]LinkInfo
+	linkLookupCachedAt time.Time
+
 	// esc escalates consecutive refresh failures from WARN to ERROR so a
 	// single blip doesn't page on-call (see logger.Escalator).
 	esc logger.Escalator
@@ -1092,13 +1099,12 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	sortDuration := time.Since(sortStart)
 	v.log.Debug("telemetry/usage: sorted rows", "rows", len(rows), "duration", sortDuration.String())
 
-	// Build link lookup map from dz_links_current table
-	linkLookup, err := v.buildLinkLookup(ctx)
-	if err != nil {
-		v.log.Warn("telemetry/usage: failed to build link lookup map, proceeding without link information", "error", err)
-		linkLookup = make(map[string]LinkInfo)
-	} else {
-		v.log.Debug("telemetry/usage: built link lookup map", "links", len(linkLookup))
+	// No rows means nothing to attribute, so a failed lookup must not hold the watermark.
+	var linkLookup map[string]LinkInfo
+	if len(rows) > 0 {
+		if linkLookup, err = v.linkLookup(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Convert rows to InterfaceUsage, tracking last known values per device/interface
@@ -1114,7 +1120,34 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	return usage, endBaselines, nil
 }
 
-// buildLinkLookup builds a map from "device_pk:intf" to LinkInfo by querying the dz_links_history table
+// linkLookup returns the link attribution map for a batch, retrying a failed
+// build once and then falling back to the last good map. With no cached map it
+// fails the caller instead: a batch written without attribution carries
+// an empty link_pk on every row and pages as every link going silent at once. The
+// refresh does not advance its watermark on error, so the next cycle re-reads
+// the window, and the refresh escalator pages if that keeps happening.
+// Callers hold refreshMu.
+func (v *View) linkLookup(ctx context.Context) (map[string]LinkInfo, error) {
+	lookup, err := v.buildLinkLookup(ctx)
+	if err != nil && ctx.Err() == nil {
+		lookup, err = v.buildLinkLookup(ctx)
+	}
+	if err == nil {
+		v.linkLookupCache, v.linkLookupCachedAt = lookup, v.cfg.Clock.Now()
+		v.log.Debug("telemetry/usage: built link lookup map", "links", len(lookup))
+		return lookup, nil
+	}
+	if ctx.Err() != nil || v.linkLookupCache == nil {
+		return nil, fmt.Errorf("link lookup failed with no cached map to fall back on: %w", err)
+	}
+	v.log.Warn("telemetry/usage: link lookup failed, using cached link lookup map",
+		"error", err, "links", len(v.linkLookupCache),
+		"cache_age", v.cfg.Clock.Since(v.linkLookupCachedAt).Round(time.Second).String())
+	return v.linkLookupCache, nil
+}
+
+// buildLinkLookup builds a map from "device_pk:intf" to LinkInfo by querying the dz_links_history table.
+// An empty result is an error: a network always has links, so zero means the read went wrong.
 func (v *View) buildLinkLookup(ctx context.Context) (map[string]LinkInfo, error) {
 	lookup := make(map[string]LinkInfo)
 
@@ -1170,6 +1203,14 @@ func (v *View) buildLinkLookup(ctx context.Context) (map[string]LinkInfo, error)
 			}
 			lookup[key] = LinkInfo{LinkPK: linkPKVal, LinkSide: "Z"}
 		}
+	}
+	// A stream cut mid-read (e.g. read: EOF) ends Next early; without this the
+	// partial map would be returned as a success.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read link rows: %w", err)
+	}
+	if len(lookup) == 0 {
+		return nil, errors.New("link lookup returned no links")
 	}
 
 	return lookup, nil

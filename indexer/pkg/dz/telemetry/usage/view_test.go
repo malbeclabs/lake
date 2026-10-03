@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
@@ -393,12 +394,10 @@ func TestLake_TelemetryUsage_View_buildLinkLookup(t *testing.T) {
 		require.Equal(t, "Z", link2SideZ.LinkSide)
 	})
 
-	t.Run("handles empty links table", func(t *testing.T) {
+	t.Run("empty links table is an error", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
-		// Tables are created via migrations, no need to create them here
-		// This test verifies that buildLinkLookup works with empty tables
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			ClickHouse:      mockDB,
@@ -409,10 +408,8 @@ func TestLake_TelemetryUsage_View_buildLinkLookup(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		lookup, err := view.buildLinkLookup(context.Background())
-		require.NoError(t, err)
-		require.NotNil(t, lookup)
-		require.Equal(t, 0, len(lookup))
+		_, err = view.buildLinkLookup(context.Background())
+		require.Error(t, err)
 	})
 }
 
@@ -1818,7 +1815,7 @@ func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipp
 	view, err := NewView(ViewConfig{
 		Logger:          laketesting.NewLogger(),
 		Clock:           clock,
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,
@@ -1871,7 +1868,7 @@ func TestLake_TelemetryUsage_View_Refresh_CatchupDivergenceWarn(t *testing.T) {
 		view, err := NewView(ViewConfig{
 			Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
 			Clock:           clock,
-			ClickHouse:      testClient(t),
+			ClickHouse:      linkedTestClient(t),
 			InfluxDB:        influx,
 			Bucket:          "test-bucket",
 			RefreshInterval: time.Second,
@@ -2067,7 +2064,7 @@ func TestLake_TelemetryUsage_View_Refresh_DedupedOnlyAgedSpanAdvancesAnchor(t *t
 	view, err := NewView(ViewConfig{
 		Logger:          laketesting.NewLogger(),
 		Clock:           clock,
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,
@@ -2176,7 +2173,7 @@ func TestLake_TelemetryUsage_View_Refresh_CatchupEmitsFirstRowOfLaggingKey(t *te
 	view, err := NewView(ViewConfig{
 		Logger:          laketesting.NewLogger(),
 		Clock:           clock,
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,
@@ -2265,7 +2262,7 @@ func adaptiveSpanView(
 	view, err := NewView(ViewConfig{
 		Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
 		Clock:           clock,
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,
@@ -2673,4 +2670,144 @@ func TestLake_TelemetryUsage_View_Refresh_InitialRefreshShrinksDespiteSlidingWin
 	require.Equal(t, 1, view.sameWindowCycles,
 		"the window never repeats here — which is exactly why the trigger cannot be window identity")
 	require.Contains(t, logBuf.String(), "halving the catch-up span")
+}
+
+// testLink is the link linkedTestClient seeds; its side A is the interface the
+// link-lookup tests report counters for.
+var testLink = dzsvc.Link{
+	PK:             "test-link",
+	SideAPK:        "test-link-a",
+	SideAIfaceName: "Ethernet1",
+	SideZPK:        "test-link-z",
+	SideZIfaceName: "Ethernet1",
+}
+
+// linkedTestClient returns a test client whose links table holds testLink. A
+// refresh that writes rows needs a non-empty link lookup (see linkLookup).
+func linkedTestClient(t *testing.T) clickhouse.Client {
+	t.Helper()
+	client := testClient(t)
+	svcStore, err := dzsvc.NewStore(dzsvc.StoreConfig{Logger: laketesting.NewLogger(), ClickHouse: client})
+	require.NoError(t, err)
+	require.NoError(t, svcStore.ReplaceLinks(context.Background(), []dzsvc.Link{testLink}))
+	return client
+}
+
+// linkLookupView builds a View over client whose InfluxDB mock reports testLink's
+// side A interface once a minute, with log output captured.
+func linkLookupView(t *testing.T, client clickhouse.Client, clock clockwork.Clock) (*View, *bytes.Buffer) {
+	t.Helper()
+	origin := clock.Now().Add(-2 * time.Hour)
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			var out []map[string]any
+			for ts := origin; ts.Before(e); ts = ts.Add(time.Minute) {
+				if !ts.Before(s) {
+					out = append(out, map[string]any{
+						"time":       ts.UTC().Format(time.RFC3339Nano),
+						"dzd_pubkey": testLink.SideAPK,
+						"intf":       testLink.SideAIfaceName,
+						"in-octets":  ts.Sub(origin).Milliseconds(),
+					})
+				}
+			}
+			return out, nil
+		},
+	}
+	var logBuf bytes.Buffer
+	view, err := NewView(ViewConfig{
+		Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
+		Clock:           clock,
+		ClickHouse:      client,
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      5 * time.Minute,
+	})
+	require.NoError(t, err)
+	return view, &logBuf
+}
+
+// countLinkAttribution returns how many interface-counter rows carry a link_pk
+// and how many do not.
+func countLinkAttribution(t *testing.T, client clickhouse.Client) (attributed, unattributed uint64) {
+	t.Helper()
+	conn, err := client.Conn(context.Background())
+	require.NoError(t, err)
+	rows, err := conn.Query(context.Background(),
+		"SELECT countIf(ifNull(link_pk, '') != ''), countIf(ifNull(link_pk, '') = '') FROM fact_dz_device_interface_counters")
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&attributed, &unattributed))
+	return attributed, unattributed
+}
+
+func execSQL(t *testing.T, client clickhouse.Client, query string) {
+	t.Helper()
+	conn, err := client.Conn(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, conn.Exec(context.Background(), query))
+}
+
+// breakLinkLookup makes every link lookup fail, either outright or by returning
+// no links, which the view must treat the same way.
+var breakLinkLookup = map[string]string{
+	"lookup error": "RENAME TABLE dim_dz_links_history TO dim_dz_links_history_gone",
+	"zero links":   "TRUNCATE TABLE dim_dz_links_history",
+}
+
+// A failed link lookup used to write the whole batch with an empty link_pk, which
+// paged as every link going silent at once. With a lookup cached from an earlier
+// refresh, the batch is attributed from the cache instead.
+func TestLake_TelemetryUsage_View_Refresh_LinkLookupFailureUsesCachedMap(t *testing.T) {
+	t.Parallel()
+	for name, breakSQL := range breakLinkLookup {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clock := clockwork.NewFakeClockAt(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+			client := linkedTestClient(t)
+			view, logBuf := linkLookupView(t, client, clock)
+
+			_, err := view.Refresh(t.Context())
+			require.NoError(t, err)
+			before, unattributed := countLinkAttribution(t, client)
+			require.NotZero(t, before)
+			require.Zero(t, unattributed)
+
+			execSQL(t, client, breakSQL)
+			clock.Advance(5 * time.Minute)
+			_, err = view.Refresh(t.Context())
+			require.NoError(t, err)
+
+			after, unattributed := countLinkAttribution(t, client)
+			require.Greater(t, after, before, "the refresh after the failure must write rows")
+			require.Zero(t, unattributed, "rows written from the cached lookup must carry link_pk")
+			require.Contains(t, logBuf.String(), "using cached link lookup map")
+			require.Contains(t, logBuf.String(), "cache_age=5m0s")
+		})
+	}
+}
+
+// With no cached lookup (the first refresh after start) a failed lookup fails the
+// refresh and writes nothing, so the next cycle re-reads the window.
+func TestLake_TelemetryUsage_View_Refresh_LinkLookupFailureWithoutCacheFails(t *testing.T) {
+	t.Parallel()
+	for name, breakSQL := range breakLinkLookup {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clock := clockwork.NewFakeClockAt(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+			client := linkedTestClient(t)
+			execSQL(t, client, breakSQL)
+			view, _ := linkLookupView(t, client, clock)
+
+			_, err := view.Refresh(t.Context())
+			require.ErrorContains(t, err, "no cached map")
+
+			attributed, unattributed := countLinkAttribution(t, client)
+			require.Zero(t, attributed)
+			require.Zero(t, unattributed)
+		})
+	}
 }
