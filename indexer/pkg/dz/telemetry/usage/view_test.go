@@ -2758,9 +2758,8 @@ var breakLinkLookup = map[string]string{
 	"zero links":   "TRUNCATE TABLE dim_dz_links_history",
 }
 
-// A failed link lookup used to write the whole batch with an empty link_pk, which
-// paged as every link going silent at once. With a lookup cached from an earlier
-// refresh, the batch is attributed from the cache instead.
+// With a lookup cached from an earlier refresh, a failed lookup attributes the
+// batch from the cache.
 func TestLake_TelemetryUsage_View_Refresh_LinkLookupFailureUsesCachedMap(t *testing.T) {
 	t.Parallel()
 	for name, breakSQL := range breakLinkLookup {
@@ -2791,7 +2790,7 @@ func TestLake_TelemetryUsage_View_Refresh_LinkLookupFailureUsesCachedMap(t *test
 }
 
 // With no cached lookup (the first refresh after start) a failed lookup fails the
-// refresh and writes nothing, so the next cycle re-reads the window.
+// refresh and writes nothing.
 func TestLake_TelemetryUsage_View_Refresh_LinkLookupFailureWithoutCacheFails(t *testing.T) {
 	t.Parallel()
 	for name, breakSQL := range breakLinkLookup {

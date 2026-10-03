@@ -447,10 +447,8 @@ type View struct {
 	lastWindowEnd    time.Time
 	sameWindowCycles int
 
-	// linkLookupCache is the last link lookup that built successfully, and
-	// linkLookupCachedAt when. A failed lookup falls back to it rather than
-	// writing a batch with every link_pk empty, which reads downstream as every
-	// link going silent at once. Guarded by refreshMu.
+	// linkLookupCache is the last good link lookup, built at linkLookupCachedAt;
+	// linkLookup falls back to it. Guarded by refreshMu.
 	linkLookupCache    map[string]LinkInfo
 	linkLookupCachedAt time.Time
 
@@ -1122,11 +1120,9 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 
 // linkLookup returns the link attribution map for a batch, retrying a failed
 // build once and then falling back to the last good map. With no cached map it
-// fails the caller instead: a batch written without attribution carries
-// an empty link_pk on every row and pages as every link going silent at once. The
-// refresh does not advance its watermark on error, so the next cycle re-reads
-// the window, and the refresh escalator pages if that keeps happening.
-// Callers hold refreshMu.
+// fails instead: a batch with an empty link_pk on every row pages as every link
+// going silent at once, while a failed refresh leaves the watermark in place and
+// the next cycle re-reads the window. Callers hold refreshMu.
 func (v *View) linkLookup(ctx context.Context) (map[string]LinkInfo, error) {
 	lookup, err := v.buildLinkLookup(ctx)
 	if err != nil && ctx.Err() == nil {
