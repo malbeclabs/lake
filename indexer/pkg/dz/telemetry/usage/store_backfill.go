@@ -55,10 +55,9 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	}
 
 	// Build link lookup for enrichment
-	linkLookup, err := v.buildLinkLookup(ctx)
+	linkLookup, err := v.linkLookup(ctx)
 	if err != nil {
-		v.log.Warn("telemetry/usage: failed to build link lookup for backfill, proceeding without", "error", err)
-		linkLookup = make(map[string]LinkInfo)
+		return nil, fmt.Errorf("backfill: %w", err)
 	}
 
 	// Query InfluxDB for the time range

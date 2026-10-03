@@ -109,7 +109,7 @@ func TestLake_TelemetryUsage_BackfillForTimeRange_ChunksQuery(t *testing.T) {
 
 	view, err := NewView(ViewConfig{
 		Logger:          laketesting.NewLogger(),
-		ClickHouse:      testClient(t),
+		ClickHouse:      linkedTestClient(t),
 		InfluxDB:        influx,
 		Bucket:          "test-bucket",
 		RefreshInterval: time.Second,
